@@ -1,0 +1,126 @@
+/********************************************************************/
+/********************* GLOBAL TEMPORARY TABLES  *********************/
+/********************************************************************/
+
+create global temporary table m_performrep_ts.gt_DFr_Plan_Prod_Sum, NO LOG 
+(    Service_Segment_Code           CHAR(3)  NOT NULL     
+    ,Org_Unit_Type                  CHAR(3) NOT NULL       
+    ,Org_Unit_Code                  CHAR(5) NOT NULL       
+    ,Org_Unit_Code_Suppl            CHAR(3) NOT NULL       
+    ,Org_Unit_Level                 SMALLINT  NOT NULL     
+    ,Officer_Id                     CHAR(3)       
+    ,Client_Count_In                DECIMAL(17,2) 
+    ,Client_Count_Out               DECIMAL(17,2) 
+)
+primary index gt_DFr_Plan_Prod_Sum_NUPI ( Org_Unit_Type,
+ Org_Unit_Code,
+ Org_Unit_Code_Suppl,
+ Service_Segment_Code,
+ Org_Unit_Level )
+on commit preserve rows;
+COMMENT ON TABLE m_performrep_ts.gt_DFr_Plan_Prod_Sum IS 'm_performrep_ts-secten plan pro tyden M-20060120154500';   
+collect statistics on m_performrep_ts.gt_DFr_Plan_Prod_Sum index gt_DFr_Plan_Prod_Sum_NUPI;
+
+
+create global temporary table m_performrep_ts.gt_DFr_Customer_IN_Counts, NO LOG
+(
+    Date_Valid                      DATE FORMAT 'YYYY-MM-DD'    not null 
+    ,Service_Segment                CHAR(3)  not null
+    ,Org_Unit_Type                  CHAR(3)  not null                      
+    ,Org_Unit_Code                  CHAR(5)  not null                   
+    ,Org_Unit_Code_Suppl            CHAR(3)  not null
+    ,Org_Unit_Level                 CHAR(1)  not null                      
+    ,Officer_Id                     CHAR(3)   
+    ,Client_Count_In                INTEGER  not null
+    ,Client_Count_Out               INTEGER  not null 
+)
+UNIQUE PRIMARY INDEX m_performrep_ts.gt_DFr_Customer_IN_Counts_UPI (Date_Valid
+                                            ,Service_Segment
+                                            ,Org_Unit_Type
+                                            ,Org_Unit_Code
+                                            ,Org_Unit_Code_Suppl
+                                            ,Org_Unit_Level 
+                                            ,Officer_Id)
+on commit preserve rows;
+
+COMMENT ON TABLE m_performrep_ts.gt_DFr_Customer_IN_Counts IS 'm_performrep_ts-mnozstvi spravovanych klientu v portfoliu jednotky M-20060120154500';   
+COLLECT STATISTICS on m_performrep_ts.gt_DFr_Customer_IN_Counts index gt_DFr_Customer_IN_Counts_UPI ;
+
+
+create global temporary table gt_DFR_Plan_Cust_Counts_FF, NO LOG 
+(
+    Date_Valid                     DATE                 not null, 
+    Node_Code                      CHAR(17)             not null, 
+    Service_Segment_Code           CHAR(3)              not null, 
+    WFF_Client_Saldo               DECIMAL(17,2)                  
+)
+unique primary index gt_DFR_Plan_Cust_Counts_FF_UPI ( Date_Valid,
+ Node_Code,
+ Service_Segment_Code )
+on commit preserve rows;
+COMMENT ON TABLE m_performrep_ts.gt_DFR_Plan_Cust_Counts_FF IS 'm_performrep_ts-Splneni cilu na pocet klientu sledovana ke konci tydne M-20060120154500';   
+collect statistics on m_performrep_ts.gt_DFR_Plan_Cust_Counts_FF index gt_DFR_Plan_Cust_Counts_FF_UPI;
+
+--------------------------------------DFR_Plan_Prod_Sum_FF---------------------------
+
+CREATE GLOBAL TEMPORARY TABLE m_performrep_ts.gt_DFr_Prod_Sum_R, NO LOG
+     (
+      Date_Valid              DATE FORMAT 'YYYY-MM-DD' NOT NULL,        
+      Product_Group_Code      VARCHAR(10) NOT NULL,                     
+      Product_Level           BYTEINT NOT NULL,                                                  
+      Service_Segment         CHAR(3)  NOT NULL,                        
+      Org_Unit_Type           CHAR(3) NOT NULL,                         
+      Org_Unit_Code           CHAR(5) NOT NULL,                         
+      Org_Unit_Code_Suppl     CHAR(3) NOT NULL,                         
+      Org_Unit_Level          CHAR(1) NOT NULL,
+      Business_Officer_Code   CHAR(9) NOT NULL,                         
+      P_Org_Unit_Type         CHAR(3) NOT NULL,                         
+      P_Org_Unit_Code         CHAR(5) NOT NULL,                         
+      P_Org_Unit_Code_Suppl   CHAR(3) NOT NULL,                         
+      P_Org_Unit_Level        CHAR(1) NOT NULL,                         
+      Product_Avg_Balance_Credit     DECIMAL(17,2),
+      Product_Avg_Balance_Debit      DECIMAL(17,2),
+      Product_Avg_Balance_Other      DECIMAL(17,2),
+      Product_Amt_CZK         DECIMAL(17,2),
+      Product_Amt_In_CZK      DECIMAL(17,2),                                    
+      Product_Count           INTEGER,                                   
+      Product_Count_In        INTEGER                                   
+      )                                                                 
+UNIQUE PRIMARY INDEX gt_DM_Prod_Sum_UPI ( Date_Valid , Product_Group_Code ,
+Service_Segment ,Org_Unit_Type, Org_Unit_Code, Org_Unit_Code_Suppl, Org_Unit_Level, Business_Officer_Code )
+on commit preserve rows;
+COMMENT ON TABLE m_performrep_ts.gt_DFr_Prod_Sum_R IS 'm_performrep_ts-Sectene data pres organizacnu strukturu M-20060120154500';   
+collect statistics m_performrep_ts.gt_DFr_Prod_Sum_R index gt_DM_Prod_Sum_UPI;
+
+
+
+--tabulka je odvozena od zakladni tabulky a obsahuje zdrojove data pro report, pro aktualni jednotku
+CREATE GLOBAL TEMPORARY MULTISET TABLE gt_DFr_Prod_Sum
+     (
+      Date_Valid              DATE FORMAT 'YYYY-MM-DD' NOT NULL,        
+      Product_Group_Code      VARCHAR(10) NOT NULL,                     
+      Product_Level           BYTEINT NOT NULL,                        
+      Service_Segment         CHAR(3)  NOT NULL,                        
+      Org_Unit_Type           CHAR(3) NOT NULL,                         
+      Org_Unit_Code           CHAR(5) NOT NULL,                         
+      Org_Unit_Code_Suppl     CHAR(3) NOT NULL,                         
+      Org_Unit_Level          CHAR(1) NOT NULL,
+      Business_Officer_Code   CHAR(9) NOT NULL,                         
+      P_Org_Unit_Type         CHAR(3) NOT NULL,                         
+      P_Org_Unit_Code         CHAR(5) NOT NULL,                         
+      P_Org_Unit_Code_Suppl   CHAR(3) NOT NULL,                         
+      P_Org_Unit_Level        CHAR(1) NOT NULL,                         
+      Product_Avg_Balance_Credit     DECIMAL(17,2),
+      Product_Avg_Balance_Debit      DECIMAL(17,2),
+      Product_Avg_Balance_Other      DECIMAL(17,2),
+      Product_Amt_CZK         DECIMAL(17,2),
+      Product_Amt_In_CZK      DECIMAL(17,2),                                    
+      Product_Count           INTEGER,
+      Product_Count_In        INTEGER                                   
+      )                                                                 
+PRIMARY INDEX gt_DFr_Prod_Sum_NUPI ( Date_Valid , Product_Group_Code ,
+Service_Segment ,Org_Unit_Type, Org_Unit_Code, Org_Unit_Code_Suppl, Org_Unit_Level, Business_Officer_Code )
+;
+COMMENT ON TABLE m_performrep_ts.gt_DFr_Prod_Sum IS 'm_performrep_ts-Data nezagregovana pres organizacni strukturu M-20060120154500';   
+collect statistics m_performrep_ts.gt_DFr_Prod_Sum index gt_DFr_Prod_Sum_NUPI;
+

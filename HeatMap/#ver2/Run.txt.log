@@ -1,0 +1,543 @@
+BTEQ 08.02.01.00 Thu Mar 16 11:54:41 2006
+ 
++---------+---------+---------+---------+---------+---------+---------+----
+                   
+.SET ERRORLEVEL UNKNOWN SEVERITY 16;
++---------+---------+---------+---------+---------+---------+---------+----
+
+.SET ERROROUT STDOUT;
+ *** Error messages now directed to STDOUT.
++---------+---------+---------+---------+---------+---------+---------+----
+
+.LOGON dwkb.kb.cz/e_mmraz
+
+ *** Logon successfully completed.
+ *** Transaction Semantics are BTET.
+ *** Character Set Name is 'ASCII'.
+ 
+ *** Total elapsed time was 13 seconds.
+ 
++---------+---------+---------+---------+---------+---------+---------+----
+--.LOGON dwkbtest.kb.cz/e_mmraz;
+
+DATABASE d_dwkb;
+
+ *** New default database accepted. 
+ *** Total elapsed time was 1 second.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+
+.SET MAXERROR 1
++---------+---------+---------+---------+---------+---------+---------+----
+
+.RUN FILE="init_TSHTMPW.txt"
++---------+---------+---------+---------+---------+---------+---------+----
+/********1*********2*********3*********4*********5*********6*********/
+-- Code: TSHTMPW
+-- Name: TSHTMPW.txt
+-- Utility: BTEQ
+-- Mutation: m_performrep_ts
+-- Type: Transformaèní
+-- Description: Skript T-fáze plnící tabulku
+--              Sales_Heatmap_W v datamartu m_performrep_ts
+-- Run when: Plnìní martu m_performrep_ts.
+--           Spouští se v procesu dennì.
+-- User: trf_marts
+-- Repeatable: Pokud nebyl dokonèen, lze opakovat.
+-- Documentation: m_performrep_ts.pdm
+-- Date used: 2006-01-30
+/********************************************************************/
+-- V_MD_DWE_Date: ano
+/********************************************************************/
+--  RJA * 2005-12-20 FIRST WRITTEN
+-- Changes:
+--  RSO * 2006-02-06 Pridana filtrace na Date_Valid zdrojovych tabulek
+/********************************************************************/
+
+--.RUN FILE='i:\IFSec\InformaticaServer\CtlFiles\logon_trf_marts.txt'
+
+.SET MAXERROR 1
++---------+---------+---------+---------+---------+---------+---------+----
+
+--.quit 0
+
+DATABASE m_performrep_ts;
+
+ *** New default database accepted. 
+ *** Total elapsed time was 1 second.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+
+
+/* Pokud neni datum posledni transformace daneho tydne, tak se skript ukonci */
+
+
+
+.SET ERRORLEVEL UNKNOWN SEVERITY 16;
++---------+---------+---------+---------+---------+---------+---------+----
+.SET ERROROUT STDOUT;
+ *** Error messages now directed to STDOUT.
++---------+---------+---------+---------+---------+---------+---------+----
+.SET ERRORLEVEL 3807 SEVERITY 0;
++---------+---------+---------+---------+---------+---------+---------+----
+
+/* probably drop of tmp tables */
+
+.SET ERRORLEVEL 3807 SEVERITY 8;
++---------+---------+---------+---------+---------+---------+---------+----
+
+/*************** MD_SCRIPT_TIMES.SCRIPT_START ***********************/
+
+--EXEC dwkb_meta.MD_Script_Times_Ins(Script_Code = 'TSHTMPW');
+
+
+
+
+/****START***** create tmp tables *****/
+
+--Tabulka obsahuje datum krajni hranice pro mazani
+
+create volatile table vt_Actual_Day
+(
+   Date_Valids DATE FORMAT 'YYYY-MM-DD'
+)
+on commit preserve rows;
+
+ *** Table has been created. 
+ *** Total elapsed time was 1 second.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+
+insert into vt_Actual_Day select DATE '2006-02-17';
+
+ *** Insert completed. One row added. 
+ *** Total elapsed time was 1 second.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+
+
+CREATE VOLATILE TABLE Tmp_Delete_Date
+(
+   Date_Valid DATE FORMAT 'YYYY-MM-DD'
+)
+ON COMMIT PRESERVE ROWS;
+
+ *** Table has been created. 
+ *** Total elapsed time was 1 second.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+
+
+
+/****START***** insert into tmp tables *****/
+
+
+insert into gt_DFR_Plan_Prod_Sum_FF
+(
+    Date_Valid
+    ,Node_Code
+    ,Service_Segment_Code
+    ,Product_Group_Code
+    ,WFF_Product_Count_In
+    ,WFF_Product_Amt_In_CZK
+    ,WFF_Product_Count
+    ,WFF_Product_Avg_Balance_Credit
+    ,WFF_Product_Avg_Balance_Debit
+    ,WFF_Product_Avg_Balance_Other
+    ,WFF_Client_Saldo
+)
+
+select
+    PPS.Date_Valid
+    ,PPS.Node_Code
+    ,PPS.Service_Segment_Code
+    ,PPS.Product_Group_Code
+    ,PPS.WFF_Product_Count_In
+    ,PPS.WFF_Product_Amt_In_CZK
+    ,PPS.WFF_Product_Count
+    ,PPS.WFF_Product_Avg_Balance_Credit
+    ,PPS.WFF_Product_Avg_Balance_Debit
+    ,PPS.WFF_Product_Avg_Balance_Other
+    ,NULL AS WFF_Client_Saldo
+from m_performrep_ts.DFR_Plan_Prod_Sum_FF PPS
+where PPS.Date_Valid = vt_Actual_Day.Date_Valids
+union
+
+select
+    DCC.Date_Valid
+    ,DCC.Node_Code
+    ,DCC.Service_Segment_Code
+    ,'XXXXXXXXXX' as Product_Group_Code
+    ,NULL as WFF_Product_Count_In
+    ,NULL as WFF_Product_Amt_In_CZK
+    ,NULL as WFF_Product_Count
+    ,NULL as WFF_Product_Avg_Balance_Credit
+    ,NULL as WFF_Product_Avg_Balance_Debit
+    ,NULL as WFF_Product_Avg_Balance_Other
+    ,DCC.WFF_Client_Saldo
+from m_performrep_ts.DFR_Plan_Customer_Counts_FF DCC
+where DCC.Date_Valid = vt_Actual_Day.Date_Valids
+;
+
+ *** Insert completed. 332143 rows added. 
+ *** Total elapsed time was 2 seconds.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+
+
+collect statistics on temporary gt_DFR_Plan_Prod_Sum_FF;
+
+ *** Update completed. 2 rows changed. 
+ *** Total elapsed time was 1 second.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+
+
+
+/*****  Plneni cilove tabulky a historicke tabulky  ******/
+
+
+/* Odmazani starych zaznamu z historicke DFR tabulky */
+
+insert into Tmp_Delete_Date
+(
+  Date_Valid
+)
+select Date_Valid
+from m_performrep_ts.DFR_Sales_Heatmap
+QUALIFY sum(1) over(order by Date_Valid desc rows unbounded preceding) > 5
+2
+group by 1
+;
+
+ *** Insert completed. No rows added. 
+ *** Total elapsed time was 1 second.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+
+
+delete from m_performrep_ts.DFR_Sales_Heatmap where Date_Valid in (select D
+ate_Valid from Tmp_Delete_Date);
+
+ *** Delete completed. No rows removed. 
+ *** Total elapsed time was 1 second.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+COLLECT STATISTICS m_performrep_ts.DFR_Sales_Heatmap;
+
+ *** Update completed. One row changed. 
+ *** Total elapsed time was 1 second.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+
+
+delete from Tmp_Delete_Date;
+
+ *** Delete completed. No rows removed. 
+ *** Total elapsed time was 1 second.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+
+
+insert into Tmp_Delete_Date
+(
+  Date_Valid
+)
+select Date_Valid
+from m_performrep_ts.Sales_Heatmap_W
+QUALIFY sum(1) over(order by Date_Valid desc rows unbounded preceding) > 4
+
+group by 1
+;
+
+ *** Insert completed. No rows added. 
+ *** Total elapsed time was 1 second.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+
+delete from m_performrep_ts.DFR_Sales_Heatmap
+where Date_Valid in (select Date_Valid from Tmp_Delete_Date);
+
+ *** Delete completed. No rows removed. 
+ *** Total elapsed time was 1 second.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+
+collect statistics on m_performrep_ts.DFR_Sales_Heatmap;
+
+ *** Update completed. One row changed. 
+ *** Total elapsed time was 1 second.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+
+
+
+/* Plneni historicke DFR tabulky */
+
+insert into m_performrep_ts.DFR_Sales_Heatmap
+(
+    Date_Valid
+    ,Node_Code
+    ,Service_Segment_Code
+    ,Product_Group_Code
+    ,Child_Node_Code
+    ,Child_Node_Short_Name
+    ,Child_Node_Indicator
+    ,Client_Target_Indicator
+    ,Product_Group_Desc
+    ,Product_Desc
+    ,Product_Sort
+    ,WFF_Product_Count_In
+    ,WFF_Product_Amt_In_CZK
+    ,WFF_Product_Count
+    ,WFF_Product_Avg_Balance
+)
+select
+    Date_Valid
+    ,Node_Code
+    ,Service_Segment_Code
+    ,Product_Group_Code
+    ,Child_Node_Code
+    ,Child_Node_Short_Name
+    ,Child_Node_Indicator
+    ,Client_Target_Indicator
+    ,Product_Group_Desc
+    ,Product_Desc
+    ,Product_Sort
+    ,WFF_Product_Count_In
+    ,WFF_Product_Amt_In_CZK
+    ,WFF_Product_Count
+    ,WFF_Product_Avg_Balance
+from m_performrep_ts.Sales_Heatmap_W
+where Date_Valid in (select Date_Valid from Tmp_Delete_Date);
+
+ *** Insert completed. No rows added. 
+ *** Total elapsed time was 1 second.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+
+collect statistics on m_performrep_ts.DFR_Sales_Heatmap;
+
+ *** Update completed. One row changed. 
+ *** Total elapsed time was 1 second.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+
+
+
+/* Plneni cilove tabulky */
+
+delete from m_performrep_ts.Sales_Heatmap_W where Date_Valid in (select Dat
+e_Valid from Tmp_Delete_Date);
+
+ *** Delete completed. No rows removed. 
+ *** Total elapsed time was 1 second.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+collect statistics m_performrep_ts.Sales_Heatmap_W;
+
+ *** Update completed. One row changed. 
+ *** Total elapsed time was 1 second.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+
+delete from m_performrep_ts.Sales_Heatmap_W where Date_Valid = vt_Actual_Da
+y.Date_Valids;
+
+ *** Delete completed. 6513 rows removed. 
+ *** Total elapsed time was 1 second.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+ 
+
+insert into m_performrep_ts.Sales_Heatmap_W
+(
+    Date_Valid
+    ,Node_Code
+    ,Service_Segment_Code
+    ,Product_Group_Code
+    ,Child_Node_Code
+    ,Child_Node_Short_Name
+    ,Child_Node_Indicator
+    ,Client_Target_Indicator
+    ,Product_Group_Desc
+    ,Product_Desc
+    ,Product_Sort
+    ,WFF_Product_Count_In
+    ,WFF_Product_Amt_In_CZK
+    ,WFF_Product_Count
+    ,WFF_Product_Avg_Balance
+)
+select
+    PPS.Date_Valid as Date_Valid
+    ,PPS.Node_Code as Node_Code
+    ,PPS.Service_Segment_Code as Service_Segment_Code
+    ,PPS.Product_Group_Code as Product_Group_Code
+    ,PPS2.Node_Code as Child_Node_Code
+    ,PPS.Node_Short_Name as Child_Node_Short_Name 
+    ,case
+        when PPS.Node_Code = PPS2.Node_Code
+        then 'N'
+        else 'Y'
+     end Child_Node_Indicator
+    ,case
+        when PPS.Product_Group_Code = 'XXXXXXXXXX'
+        then 'Y'
+        else 'N'
+     end Client_Target_Indicator
+    ,case
+        when Client_Target_Indicator = 'Y' THEN 'Client Saldo FF'
+        else (coalesce(VCP.Product_Group_Name_EN_1,VCP2.Product_Group_Name
+_EN_1,''))
+     end as Product_Group_Desc
+    ,case
+        when Client_Target_Indicator = 'Y'
+          then ''
+        else (coalesce(VCP.Product_Group_Name_EN_3,VCP2.Product_Group_Name
+_EN_2,''))
+     end Product_Desc
+    ,case
+        when Client_Target_Indicator = 'Y'
+          then 99999900
+        else (coalesce(VCP.Product_Group_Sort_3,VCP2.Product_Group_Sort_2,
+99999900))          
+     end Product_Sort
+    ,case
+        when Client_Target_Indicator = 'Y'
+          then PPS2.WFF_Client_Saldo
+          else PPS2.WFF_Product_Count_In
+     end WFF_Product_Count_In
+    ,case
+        when Client_Target_Indicator = 'Y'
+          then NULL
+          else PPS2.WFF_Product_Amt_In_CZK
+     end WFF_Product_Amt_In_CZK
+    ,case
+        when Client_Target_Indicator = 'Y'
+          then PPS2.WFF_Client_Saldo
+          else PPS2.WFF_Product_Count
+     end WFF_Product_Count
+    ,case
+        when Client_Target_Indicator = 'Y'
+          then NULL
+        when PPS2.WFF_Product_Avg_Balance_Credit IS NULL AND PPS2.WFF_Prod
+uct_Avg_Balance_Debit IS NULL
+             AND PPS2.WFF_Product_Avg_Balance_Other IS NULL
+          then NULL
+        else (coalesce(PPS2.WFF_Product_Avg_Balance_Credit,0))
+             + (coalesce(PPS2.WFF_Product_Avg_Balance_Debit,0))
+             + (coalesce(PPS2.WFF_Product_Avg_Balance_Other,0))
+     end WFF_Product_Avg_Balance
+from
+(
+select
+    PPS.Date_Valid as Date_Valid
+    ,PPS.Service_Segment_Code as Service_Segment_Code
+    ,PPS.Product_Group_Code as Product_Group_Code
+    ,PPS.Node_Code as Node_Code
+    ,OT.Node_Code as Child_Node_Code
+    ,OT.Node_Short_Name as Node_Short_Name
+from gt_DFR_Plan_Prod_Sum_FF PPS
+inner join m_performrep_ts.D_PR_Org_Tree OT
+on PPS.Node_Code = OT.Parent_Node_Code
+union
+select
+    PPS.Date_Valid as Date_Valid
+    ,PPS.Service_Segment_Code as Service_Segment_Code
+    ,PPS.Product_Group_Code as Product_Group_Code
+    ,PPS.Node_Code as Node_Code
+    ,OT.Node_Code as Child_Node_Code
+    ,OT.Node_Short_Name as Node_Short_Name
+from gt_DFR_Plan_Prod_Sum_FF PPS
+inner join m_performrep_ts.D_PR_Org_Tree OT
+on PPS.Node_Code = OT.Node_Code
+where OT.Node_Level < 8
+) PPS
+
+inner join gt_DFR_Plan_Prod_Sum_FF PPS2
+on PPS2.Node_Code = PPS.Child_Node_Code
+   and PPS2.Date_Valid = PPS.Date_Valid
+   and PPS2.Service_Segment_Code = PPS.Service_Segment_Code
+   and PPS2.Product_Group_Code = PPS.Product_Group_Code
+
+left outer join
+(
+select distinct
+    VCP.Product_Group_Code_3
+    ,VCP.Product_Group_Name_EN_1
+    ,VCP.Product_Group_Name_EN_3
+    ,VCP.Product_Group_Sort_3
+from V_C_Product_MKTG2 VCP
+) VCP
+on PPS.Product_Group_Code <> 'XXXXXXXXXX'
+and PPS.Product_Group_Code = VCP.Product_Group_Code_3
+
+left outer join
+(
+select distinct
+    VCP.Product_Group_Code_2
+    ,VCP.Product_Group_Name_EN_1
+    ,VCP.Product_Group_Name_EN_2
+    ,VCP.Product_Group_Sort_2
+from V_C_Product_MKTG2 VCP
+) VCP2
+on PPS.Product_Group_Code <> 'XXXXXXXXXX'
+and PPS.Product_Group_Code = VCP2.Product_Group_Code_2
+;
+
+ *** Insert completed. 418224 rows added. 
+ *** Total elapsed time was 3 minutes and 27 seconds.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+
+collect statistics on m_performrep_ts.Sales_Heatmap_W;
+
+ *** Update completed. One row changed. 
+ *** Total elapsed time was 1 second.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+
+delete from Sales_Heatmap_W where  (WFF_Product_Count_In IS NULL and WFF_Pr
+oduct_Amt_In_CZK IS  NULL
+and WFF_Product_Count IS NULL and (WFF_Product_Avg_Balance IS  NULL or WFF
+_Product_Avg_Balance = 0));
+
+ *** Delete completed. 327466 rows removed. 
+ *** Total elapsed time was 5 seconds.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+
+
+DELETE FROM MD_Report_Date A. WHERE A.Date_Valid = vt_Actual_Day.Date_Valid
+s AND Report_Type = 'HTMW' AND Report_Period = 'W';
+
+DELETE FROM MD_Report_Date A. WHERE A.Date_Valid = vt_Actual_Day.Date_Vali
+ds AND Report_Type = 'HTMW' AND Report_Period = 'W';
+                             $
+ *** Failure 3706 Syntax error: expected something between the word 'A' and 
+ '.'.
+                Statement# 2, Info =31 
+
+ ***  Exiting...

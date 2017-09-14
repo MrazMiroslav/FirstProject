@@ -1,0 +1,918 @@
+BTEQ 08.02.01.00 Mon Feb 06 14:05:46 2006
+ 
++---------+---------+---------+---------+---------+---------+---------+----
+                   
+.SET ERRORLEVEL UNKNOWN SEVERITY 16;
++---------+---------+---------+---------+---------+---------+---------+----
+
+.SET ERROROUT STDOUT;
+ *** Error messages now directed to STDOUT.
++---------+---------+---------+---------+---------+---------+---------+----
+
+.LOGON dwkb.kb.cz/load_performrep
+
+ *** Logon successfully completed.
+ *** Transaction Semantics are BTET.
+ *** Character Set Name is 'ASCII'.
+ 
+ *** Total elapsed time was 5 seconds.
+ 
++---------+---------+---------+---------+---------+---------+---------+----
+--.LOGON dwkbtest.kb.cz/e_mmraz;
+
+DATABASE d_dwkb;
+
+ *** New default database accepted. 
+ *** Total elapsed time was 1 second.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+
+.SET MAXERROR 1
++---------+---------+---------+---------+---------+---------+---------+----
+
+.RUN FILE="TDFRPCCF.txt"
++---------+---------+---------+---------+---------+---------+---------+----
+/********1*********2*********3*********4*********5*********6*********/
+-- Code: TDFRPCCF
+-- Name: TDFRPCCF.txt
+-- Utility: BTEQ
+-- Mutation: m_performrep_ts
+-- Type: Transformacni
+-- Description: Skript T-faze plni tabulku
+--              DFr_Plan_Customer_Counts_FF v datamartu m_performrep_ts
+-- Run when: Plni martu m_performrep_ts.
+--           Spouti v procese denni transformace.
+-- User: load_performrep
+-- Repeatable: Pokud nebyl dokoncen, lze opakovat.
+-- Documentation: m_performrep_ts.pdm
+-- Date used: 200X-XX-XX
+/********************************************************************/
+-- V_MD_DWE_Date: ano
+/********************************************************************/
+--  MMR * 2005-12-20 FIRST WRITTEN
+-- Changes:
+/********************************************************************/
+
+--.RUN FILE='i:\IFSec\InformaticaServer\CtlFiles\logon_trf_marts.txt'
+
+.SET MAXERROR 1
++---------+---------+---------+---------+---------+---------+---------+----
+
+DATABASE m_performrep_ts;
+
+ *** New default database accepted. 
+ *** Total elapsed time was 1 second.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+
+/* Pokud neni datum posledni transformace daneho tydne, tak se skript ukonci */
+select 
+  DWE_Date
+from dwkb_meta.V_MD_DWE_Date DWE
+inner join 
+(
+    select
+      calendar_date
+      ,year_of_calendar
+      ,case
+          when day_of_week = 1
+          then week_of_year - 1
+          else week_of_year
+       end calendar_week
+    from sys_calendar.calendar
+) CAL
+on CAL.calendar_date = DWE.DWE_Date
+inner join 
+(
+    select
+      calendar_date
+      ,year_of_calendar
+      ,case
+          when day_of_week = 1
+          then week_of_year - 1
+          else week_of_year
+       end calendar_week
+    from sys_calendar.calendar
+) CAL2
+on CAL2.calendar_date = DWE.DWE_Date + DWE.Date_Weight
+where CAL.year_of_calendar = CAL2.year_of_calendar
+      and CAL.calendar_week <> CAL2.calendar_week
+;
+
+ *** Query completed. One row found. One column returned. 
+ *** Total elapsed time was 1 second.
+
+  DWE_Date
+----------
+2006-02-03
+
++---------+---------+---------+---------+---------+---------+---------+----
+.IF ACTIVITYCOUNT = 0 THEN EXIT 0;
++---------+---------+---------+---------+---------+---------+---------+----
+
+
+
+.SET ERRORLEVEL UNKNOWN SEVERITY 16;
++---------+---------+---------+---------+---------+---------+---------+----
+.SET ERROROUT STDOUT;
+ *** Error messages now directed to STDOUT.
++---------+---------+---------+---------+---------+---------+---------+----
+.SET ERRORLEVEL 3807 SEVERITY 0;
++---------+---------+---------+---------+---------+---------+---------+----
+
+/* probably drop of tmp tables */
+drop table Tmp_Working_Days;
+ *** Failure 3807 Object 'Tmp_Working_Days' does not exist.
+                Statement# 1, Info =0 
+ *** Total elapsed time was 1 second.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+drop table tmp_DFr_Plan_Client_Sum;
+
+ *** Table has been dropped. 
+ *** Total elapsed time was 1 second.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+drop table tmp_DFr_Customer_IN_Counts;
+
+ *** Table has been dropped. 
+ *** Total elapsed time was 1 second.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+drop table tmp_DFR_Plan_Cust_Counts_FF;
+
+ *** Table has been dropped. 
+ *** Total elapsed time was 1 second.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+
+
+.SET ERRORLEVEL 3807 SEVERITY 8;
++---------+---------+---------+---------+---------+---------+---------+----
+
+/*************** MD_SCRIPT_TIMES.SCRIPT_START ***********************/
+
+EXEC dwkb_meta.MD_Script_Times_Ins(Script_Code = 'TDFRPCCF');
+
+ *** Insert completed. One row added. 
+ *** Total elapsed time was 1 second.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+
+
+/****START***** create tmp tables *****/
+
+--Tabulka obsahuje datum posledniho dne minuleho roku
+CREATE VOLATILE TABLE Tmp_Working_Days
+(
+   Work_Date DATE FORMAT 'YYYY-MM-DD'
+)
+ON COMMIT PRESERVE ROWS;
+
+ *** Table has been created. 
+ *** Total elapsed time was 1 second.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+
+--secteny plan pro pracovni dny v tydnu
+create SET table tmp_DFr_Plan_Client_Sum 
+(    Service_Segment_Code           CHAR(3) NOT NULL       
+    ,Org_Unit_Type                  CHAR(3) NOT NULL      
+    ,Org_Unit_Code                  CHAR(5) NOT NULL      
+    ,Org_Unit_Code_Suppl            CHAR(3) NOT NULL      
+    ,Org_Unit_Level                 SMALLINT  NOT NULL    
+    ,Officer_Id                     CHAR(3)       
+    ,Client_Count_In                DECIMAL(17,2) 
+    ,Client_Count_Out               DECIMAL(17,2) 
+)
+primary index DFr_Plan_Prod_Sum_NUPI ( Org_Unit_Type,
+ Org_Unit_Code,
+ Org_Unit_Code_Suppl,
+ Service_Segment_Code,
+ Org_Unit_Level );
+
+ *** Table has been created. 
+ *** Total elapsed time was 1 second.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+
+collect statistics on tmp_DFr_Plan_Client_Sum index DFr_Plan_Prod_Sum_NUPI;
+
+
+ *** Update completed. One row changed. 
+ *** Total elapsed time was 1 second.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+
+
+--mnozstvi spravovanych klientu v portfoliu aktualni jednotce
+create SET table tmp_DFr_Customer_IN_Counts 
+(    Service_Segment                CHAR(3)  not null
+    ,Org_Unit_Type                  CHAR(3)  not null                     
+ 
+    ,Org_Unit_Code                  CHAR(5)  not null                   
+    ,Org_Unit_Code_Suppl            CHAR(3)  not null
+    ,Org_Unit_Level                 CHAR(1)  not null                     
+ 
+    ,Officer_Id                     CHAR(3)   
+    ,Client_Count_In                INTEGER  not null
+    ,Client_Count_Out               INTEGER  not null 
+)
+UNIQUE PRIMARY INDEX tmp_DFr_Customer_IN_Counts_UPI (Service_Segment
+                                            ,Org_Unit_Type
+                                            ,Org_Unit_Code
+                                            ,Org_Unit_Code_Suppl
+                                            ,Org_Unit_Level 
+                                            ,Officer_Id);
+
+ *** Table has been created. 
+ *** Total elapsed time was 1 second.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+
+COLLECT STATISTICS tmp_DFr_Customer_IN_Counts index tmp_DFr_Customer_IN_Cou
+nts_UPI ;
+
+ *** Update completed. One row changed. 
+ *** Total elapsed time was 1 second.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+
+
+--tabulka obsahuje data pred vlozenim do hlavni tabulky
+create SET table tmp_DFR_Plan_Cust_Counts_FF 
+(
+    Date_Valid                     DATE                 not null, 
+    Node_Code                      CHAR(17)             not null, 
+    Service_Segment_Code           CHAR(3)              not null, 
+    WFF_Client_Saldo               DECIMAL(17,2)                  
+)
+unique primary index DFR_Plan_Cust_Counts_FF_UPI ( Date_Valid,
+ Node_Code,
+ Service_Segment_Code );
+
+ *** Table has been created. 
+ *** Total elapsed time was 1 second.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+
+collect statistics on tmp_DFR_Plan_Cust_Counts_FF index DFR_Plan_Cust_Count
+s_FF_UPI;
+
+ *** Update completed. One row changed. 
+ *** Total elapsed time was 1 second.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+
+/****END***** create tmp tables *****/
+
+INSERT INTO Tmp_Working_Days
+(
+  Work_Date
+)
+SELECT calendar_Date from SYS_CALENDAR.CALENDAR
+    WHERE (year_of_calendar, week_of_year) IN
+      (SELECT 
+      A.Year_Of_Calendar, A.Week_Of_Year 
+       FROM SYS_CALENDAR.CALENDAR A
+       CROSS JOIN (SELECT dwkb_meta.V_MD_DWE_Date.DWE_Date) B 
+       WHERE A.Calendar_Date = B.DWE_Date)   
+    AND Calendar_Date NOT IN
+    (select Non_Working_Day_Date from c_non_working_days)
+;
+
+ *** Insert completed. 5 rows added. 
+ *** Total elapsed time was 1 second.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+
+----------------------------------------------------------------------------------------------
+--pocet zakazniku obsluhujucich aktualni jednotkou aktualni mesic
+INSERT INTO tmp_DFr_Customer_IN_Counts
+(
+    Service_Segment     
+    ,Org_Unit_Type      
+    ,Org_Unit_Code      
+    ,Org_Unit_Code_Suppl
+    ,Org_Unit_Level
+    ,Officer_Id       
+    ,Client_Count_In
+    ,Client_Count_Out       
+)
+SELECT
+    CASE
+      WHEN B.Management_Type = 'MC'
+        THEN 'MEM'
+      WHEN SUBSTR(A.Segment_Code_12,1,1) = 'B' AND B.Management_Type = 'XX
+'
+        THEN 'SB'
+      WHEN SUBSTR(A.Segment_Code_12,1,1) = 'P' AND B.Management_Type = 'XX
+'
+        THEN 'IND'
+    END Service_Segment   
+    ,B.Org_Unit_Type_6      
+    ,B.Org_Unit_Code_6      
+    ,B.Org_Unit_Code_Suppl_6
+    ,'8'
+    ,SUBSTR(A.Officer_Code,7,3) AS Officer_Ide
+    ,SUM(Client_Count_In)
+    ,SUM(Client_Count_Out)
+FROM V_DD_Cust_Childless_Counts A
+LEFT OUTER JOIN dwkb.R_Unit_Renumber G
+ON SUBSTR(A.Officer_Code,1,6) = G.Original_Unit_Code
+AND A.Date_Valid BETWEEN G.Start_Date AND G.End_Date
+INNER JOIN V_D_Org_Business B
+ON COALESCE(G.Unit_Code || SUBSTR(A.Officer_Code,7,3),A.Officer_Code) = B.
+Officer_Code
+GROUP BY Service_Segment, B.Org_Unit_Type_6, B.Org_Unit_Code_6, B.Org_Unit
+_Code_Suppl_6, Officer_Ide
+WHERE A.Date_Valid IN (SELECT Work_Date FROM Tmp_Working_Days)
+AND B.Management_Type IN ('XX', 'MC') AND A.Segment_Code_12 <> 'XX'
+;
+
+ *** Insert completed. 4732 rows added. 
+ *** Total elapsed time was 3 minutes and 2 seconds.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+
+COLLECT STATISTICS tmp_DFr_Customer_IN_Counts
+;
+
+ *** Update completed. One row changed. 
+ *** Total elapsed time was 1 second.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+
+-------------------------
+--pocet zakazniku obsluhujucich aktualni jednotkou aktualni mesic
+INSERT INTO tmp_DFr_Customer_IN_Counts
+(
+    Service_Segment     
+    ,Org_Unit_Type      
+    ,Org_Unit_Code      
+    ,Org_Unit_Code_Suppl
+    ,Org_Unit_Level
+    ,Officer_Id       
+    ,Client_Count_In
+    ,Client_Count_Out       
+)
+SELECT
+    CASE
+      WHEN B.Management_Type = 'MC'
+        THEN 'MEM'
+      WHEN SUBSTR(A.Segment_Code_12,1,1) = 'B' AND B.Management_Type = 'XX
+'
+        THEN 'SB'
+      WHEN SUBSTR(A.Segment_Code_12,1,1) = 'P' AND B.Management_Type = 'XX
+'
+        THEN 'IND'
+    END Service_Segment   
+    ,B.Org_Unit_Type_6      
+    ,B.Org_Unit_Code_6      
+    ,B.Org_Unit_Code_Suppl_6
+    ,'6'
+    ,NULL
+    ,SUM(Client_Count_In)
+    ,SUM(Client_Count_Out)
+FROM V_DD_Cust_Childless_Counts A
+LEFT OUTER JOIN dwkb.R_Unit_Renumber G
+ON SUBSTR(A.Officer_Code,1,6) = G.Original_Unit_Code
+AND A.Date_Valid BETWEEN G.Start_Date AND G.End_Date
+INNER JOIN V_D_Org_Business B
+ON COALESCE(G.Unit_Code || SUBSTR(A.Officer_Code,7,3),A.Officer_Code) = B.
+Officer_Code
+GROUP BY Service_Segment, B.Org_Unit_Type_6, B.Org_Unit_Code_6, B.Org_Unit
+_Code_Suppl_6
+WHERE A.Date_Valid IN (SELECT Work_Date FROM Tmp_Working_Days)
+AND B.Management_Type IN ('XX', 'MC') AND A.Segment_Code_12 <> 'XX' 
+;
+
+ *** Insert completed. 755 rows added. 
+ *** Total elapsed time was one minute and 53 seconds.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+
+COLLECT STATISTICS tmp_DFr_Customer_IN_Counts
+;
+
+ *** Update completed. One row changed. 
+ *** Total elapsed time was 1 second.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+
+-------------------------
+--pocet zakazniku obsluhujucich aktualni jednotkou aktualni mesic
+INSERT INTO tmp_DFr_Customer_IN_Counts
+(
+    Service_Segment     
+    ,Org_Unit_Type      
+    ,Org_Unit_Code      
+    ,Org_Unit_Code_Suppl
+    ,Org_Unit_Level
+    ,Officer_Id       
+    ,Client_Count_In
+    ,Client_Count_Out       
+)
+SELECT
+    CASE
+      WHEN B.Management_Type = 'MC'
+        THEN 'MEM'
+      WHEN SUBSTR(A.Segment_Code_12,1,1) = 'B' AND B.Management_Type = 'XX
+'
+        THEN 'SB'
+      WHEN SUBSTR(A.Segment_Code_12,1,1) = 'P' AND B.Management_Type = 'XX
+'
+        THEN 'IND'
+    END Service_Segment   
+    ,B.Org_Unit_Type_4      
+    ,B.Org_Unit_Code_4      
+    ,B.Org_Unit_Code_Suppl_4
+    ,'4'
+    ,NULL
+    ,SUM(Client_Count_In)
+    ,SUM(Client_Count_Out)
+FROM V_DD_Cust_Childless_Counts A
+LEFT OUTER JOIN dwkb.R_Unit_Renumber G
+ON SUBSTR(A.Officer_Code,1,6) = G.Original_Unit_Code
+AND A.Date_Valid BETWEEN G.Start_Date AND G.End_Date
+INNER JOIN V_D_Org_Business B
+ON COALESCE(G.Unit_Code || SUBSTR(A.Officer_Code,7,3),A.Officer_Code) = B.
+Officer_Code
+GROUP BY  Service_Segment, B.Org_Unit_Type_4, B.Org_Unit_Code_4, B.Org_Uni
+t_Code_Suppl_4
+WHERE A.Date_Valid IN (SELECT Work_Date FROM Tmp_Working_Days)
+AND B.Management_Type IN ('XX', 'MC') AND A.Segment_Code_12 <> 'XX'
+;
+
+ *** Insert completed. 117 rows added. 
+ *** Total elapsed time was one minute and 12 seconds.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+
+COLLECT STATISTICS tmp_DFr_Customer_IN_Counts
+;
+
+ *** Update completed. One row changed. 
+ *** Total elapsed time was 1 second.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+
+-------------------------
+--pocet zakazniku obsluhujucich aktualni jednotkou aktualni mesic
+INSERT INTO tmp_DFr_Customer_IN_Counts
+(
+    Service_Segment     
+    ,Org_Unit_Type      
+    ,Org_Unit_Code      
+    ,Org_Unit_Code_Suppl
+    ,Org_Unit_Level
+    ,Officer_Id       
+    ,Client_Count_In
+    ,Client_Count_Out       
+)
+SELECT
+    CASE
+      WHEN B.Management_Type = 'MC'
+        THEN 'MEM'
+      WHEN SUBSTR(A.Segment_Code_12,1,1) = 'B' AND B.Management_Type = 'XX
+'
+        THEN 'SB'
+      WHEN SUBSTR(A.Segment_Code_12,1,1) = 'P' AND B.Management_Type = 'XX
+'
+        THEN 'IND'
+    END Service_Segment   
+    ,B.Org_Unit_Type_3      
+    ,B.Org_Unit_Code_3      
+    ,B.Org_Unit_Code_Suppl_3
+    ,'3'
+    ,NULL
+    ,SUM(Client_Count_In)
+    ,SUM(Client_Count_Out)
+FROM V_DD_Cust_Childless_Counts A
+LEFT OUTER JOIN dwkb.R_Unit_Renumber G
+ON SUBSTR(A.Officer_Code,1,6) = G.Original_Unit_Code
+AND A.Date_Valid BETWEEN G.Start_Date AND G.End_Date
+INNER JOIN V_D_Org_Business B
+ON COALESCE(G.Unit_Code || SUBSTR(A.Officer_Code,7,3),A.Officer_Code) = B.
+Officer_Code
+GROUP BY Service_Segment, B.Org_Unit_Type_3, B.Org_Unit_Code_3, B.Org_Unit
+_Code_Suppl_3
+WHERE A.Date_Valid IN (SELECT Work_Date FROM Tmp_Working_Days)
+AND B.Management_Type IN ('XX', 'MC')  AND A.Segment_Code_12 <> 'XX' 
+;
+
+ *** Insert completed. 18 rows added. 
+ *** Total elapsed time was one minute and 13 seconds.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+
+COLLECT STATISTICS tmp_DFr_Customer_IN_Counts
+;
+
+ *** Update completed. One row changed. 
+ *** Total elapsed time was 1 second.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+-------------------------
+--pocet zakazniku obsluhujucich aktualni jednotkou aktualni mesic
+INSERT INTO tmp_DFr_Customer_IN_Counts
+(
+    Service_Segment     
+    ,Org_Unit_Type      
+    ,Org_Unit_Code      
+    ,Org_Unit_Code_Suppl
+    ,Org_Unit_Level
+    ,Officer_Id       
+    ,Client_Count_In
+    ,Client_Count_Out       
+)
+SELECT
+    CASE
+      WHEN B.Management_Type = 'MC'
+        THEN 'MEM'
+      WHEN SUBSTR(A.Segment_Code_12,1,1) = 'B' AND B.Management_Type = 'XX
+'
+        THEN 'SB'
+      WHEN SUBSTR(A.Segment_Code_12,1,1) = 'P' AND B.Management_Type = 'XX
+'
+        THEN 'IND'
+    END Service_Segment   
+    ,B.Org_Unit_Type_2      
+    ,B.Org_Unit_Code_2      
+    ,B.Org_Unit_Code_Suppl_2
+    ,'2'
+    ,NULL
+    ,SUM(Client_Count_In)
+    ,SUM(Client_Count_Out)
+FROM V_DD_Cust_Childless_Counts A
+LEFT OUTER JOIN dwkb.R_Unit_Renumber G
+ON SUBSTR(A.Officer_Code,1,6) = G.Original_Unit_Code
+AND A.Date_Valid BETWEEN G.Start_Date AND G.End_Date
+INNER JOIN V_D_Org_Business B
+ON COALESCE(G.Unit_Code || SUBSTR(A.Officer_Code,7,3),A.Officer_Code) = B.
+Officer_Code
+GROUP BY Service_Segment, B.Org_Unit_Type_2, B.Org_Unit_Code_2, B.Org_Unit
+_Code_Suppl_2
+WHERE A.Date_Valid IN (SELECT Work_Date FROM Tmp_Working_Days)
+AND B.Management_Type IN ('XX', 'MC')  AND A.Segment_Code_12 <> 'XX'
+;
+
+ *** Insert completed. 3 rows added. 
+ *** Total elapsed time was one minute and 10 seconds.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+
+COLLECT STATISTICS tmp_DFr_Customer_IN_Counts
+;
+
+ *** Update completed. One row changed. 
+ *** Total elapsed time was 1 second.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+
+INSERT INTO tmp_DFr_Plan_Client_Sum
+(        
+Service_Segment_Code
+,Org_Unit_Type       
+,Org_Unit_Code       
+,Org_Unit_Code_Suppl 
+,Org_Unit_Level      
+,Officer_Id          
+,Client_Count_In     
+,Client_Count_Out    
+)
+SELECT        
+  Service_Segment_Code
+  ,Org_Unit_Type       
+  ,Org_Unit_Code       
+  ,Org_Unit_Code_Suppl 
+  ,Org_Unit_Level      
+  ,Officer_Id          
+  ,SUM(Client_Count_In_Plan)     
+  ,SUM(Client_Count_Out_Plan)
+FROM DD_Plan_Customer_Counts    
+WHERE Date_Valid IN (SELECT Work_Date FROM Tmp_Working_Days)
+GROUP BY 1,2,3,4,5,6    
+;
+
+ *** Insert completed. 21 rows added. 
+ *** Total elapsed time was 1 second.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+
+COLLECT STATISTICS ON tmp_DFr_Plan_Client_Sum;
+
+ *** Update completed. One row changed. 
+ *** Total elapsed time was 1 second.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+-- END
+
+--INSERT 
+
+INSERT INTO tmp_DFR_Plan_Cust_Counts_FF
+(
+  Date_Valid          
+  ,Node_Code           
+  ,Service_Segment_Code
+  ,WFF_Client_Saldo    
+)   
+SELECT
+  dwkb_meta.V_MD_DWE_Date.DWE_Date
+  ,CASE
+    WHEN A.Org_Unit_Level = '8' AND A.Service_Segment = 'MEM'
+      THEN 'RMM'||A.Org_Unit_Type||A.Org_Unit_Code||A.Org_Unit_Code_Suppl|
+|A.Officer_Id
+    WHEN A.Org_Unit_Level = '8' AND (A.Service_Segment = 'IND' OR A.Servic
+e_Segment = 'SB')
+      THEN 'RMR'||A.Org_Unit_Type||A.Org_Unit_Code||A.Org_Unit_Code_Suppl|
+|A.Officer_Id
+    WHEN A.Org_Unit_Level = '6'
+      THEN  'BRM'||A.Org_Unit_Type||A.Org_Unit_Code||A.Org_Unit_Code_Suppl
+||'XXX'
+    WHEN A.Org_Unit_Level = '4'
+      THEN 'GBM'||A.Org_Unit_Type||A.Org_Unit_Code||A.Org_Unit_Code_Suppl|
+|'XXX'
+    WHEN A.Org_Unit_Level = '3'
+      THEN 'RGM'||A.Org_Unit_Type||A.Org_Unit_Code||A.Org_Unit_Code_Suppl|
+|'XXX'
+    WHEN A.Org_Unit_Level = '2'
+      THEN 'DSM'||A.Org_Unit_Type||A.Org_Unit_Code||A.Org_Unit_Code_Suppl|
+|'XXX'
+    END Node_Code
+  ,A.Service_Segment AS Service_Segment_Code
+  ,(CASE
+       WHEN  (TTARGET.Client_Count_In <> TTARGET.Client_Count_Out)
+        THEN CAST( 
+            ((CAST((A.Client_Count_In - A.Client_Count_Out) AS FLOAT) 
+            / (TTARGET.Client_Count_In - TTARGET.Client_Count_Out)) * 100)
+ 
+                AS DECIMAL(17,2) ) 
+       ELSE NULL
+     END) AS   MFF_Client_Saldo       
+
+FROM tmp_DFr_Customer_IN_Counts A
+
+LEFT OUTER JOIN tmp_DFr_Plan_Client_Sum TTARGET
+ON  A.Service_Segment       = TTARGET.Service_Segment_Code     
+AND A.Org_Unit_Type         = TTARGET.Org_Unit_Type      
+AND A.Org_Unit_Code         = TTARGET.Org_Unit_Code      
+AND A.Org_Unit_Code_Suppl   = TTARGET.Org_Unit_Code_Suppl
+AND A.Org_Unit_Level        = TTARGET.Org_Unit_Level
+AND COALESCE(A.Officer_Id,'XXX')  = COALESCE(TTARGET.Officer_Id,'XXX')
+;
+
+ *** Insert completed. 5625 rows added. 
+ *** Total elapsed time was 1 second.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+
+COLLECT STATISTICS tmp_DFR_Plan_Cust_Counts_FF;
+
+ *** Update completed. One row changed. 
+ *** Total elapsed time was 1 second.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+
+INSERT INTO tmp_DFR_Plan_Cust_Counts_FF
+(
+  Date_Valid          
+  ,Node_Code           
+  ,Service_Segment_Code
+  ,WFF_Client_Saldo    
+)   
+SELECT
+  dwkb_meta.V_MD_DWE_Date.DWE_Date
+  ,CASE
+    WHEN TTARGET.Org_Unit_Level = '8' AND TTARGET.Service_Segment_Code = '
+MEM'
+      THEN 'RMM'||TTARGET.Org_Unit_Type||TTARGET.Org_Unit_Code||TTARGET.Or
+g_Unit_Code_Suppl||TTARGET.Officer_Id
+    WHEN TTARGET.Org_Unit_Level = '8' AND (TTARGET.Service_Segment_Code = 
+'IND' OR TTARGET.Service_Segment_Code = 'SB')
+      THEN 'RMR'||TTARGET.Org_Unit_Type||TTARGET.Org_Unit_Code||TTARGET.Or
+g_Unit_Code_Suppl||TTARGET.Officer_Id
+    WHEN TTARGET.Org_Unit_Level = '6'
+      THEN  'BRM'||TTARGET.Org_Unit_Type||TTARGET.Org_Unit_Code||TTARGET.O
+rg_Unit_Code_Suppl||'XXX'
+    WHEN TTARGET.Org_Unit_Level = '4'
+      THEN 'GBM'||TTARGET.Org_Unit_Type||TTARGET.Org_Unit_Code||TTARGET.Or
+g_Unit_Code_Suppl||'XXX'
+    WHEN TTARGET.Org_Unit_Level = '3'
+      THEN 'RGM'||TTARGET.Org_Unit_Type||TTARGET.Org_Unit_Code||TTARGET.Or
+g_Unit_Code_Suppl||'XXX'
+    WHEN TTARGET.Org_Unit_Level = '2'
+      THEN 'DSM'||TTARGET.Org_Unit_Type||TTARGET.Org_Unit_Code||TTARGET.Or
+g_Unit_Code_Suppl||'XXX'
+    END Node_Code
+  ,TTARGET.Service_Segment_Code AS Service_Segment_Code
+  ,0 AS   MFF_Client_Saldo       
+
+FROM tmp_DFr_Plan_Client_Sum TTARGET
+
+LEFT OUTER JOIN tmp_DFr_Customer_IN_Counts A
+ON  A.Service_Segment       = TTARGET.Service_Segment_Code     
+AND A.Org_Unit_Type         = TTARGET.Org_Unit_Type      
+AND A.Org_Unit_Code         = TTARGET.Org_Unit_Code      
+AND A.Org_Unit_Code_Suppl   = TTARGET.Org_Unit_Code_Suppl
+AND A.Org_Unit_Level        = TTARGET.Org_Unit_Level
+AND COALESCE(A.Officer_Id,'XXX')  = COALESCE(TTARGET.Officer_Id,'XXX')
+
+WHERE A.Service_Segment IS NULL
+;
+
+ *** Insert completed. No rows added. 
+ *** Total elapsed time was 1 second.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+
+COLLECT STATISTICS ON tmp_DFR_Plan_Cust_Counts_FF;
+
+ *** Update completed. One row changed. 
+ *** Total elapsed time was 1 second.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+
+INSERT INTO tmp_DFR_Plan_Cust_Counts_FF
+(
+  Date_Valid          
+  ,Node_Code           
+  ,Service_Segment_Code
+  ,WFF_Client_Saldo    
+)
+SELECT 
+  Date_Valid          
+      ,CASE
+        WHEN Service_Segment_Code = 'MEM' 
+          THEN 'HOC'||SUBSTR(Node_Code,4)                      
+        ELSE 'HOR'||SUBSTR(Node_Code,4)
+       END Node_Code
+  ,Service_Segment_Code
+  ,WFF_Client_Saldo    
+FROM tmp_DFR_Plan_Cust_Counts_FF
+WHERE SUBSTR(Node_Code,1,3) = 'GBM'
+;
+
+ *** Insert completed. 117 rows added. 
+ *** Total elapsed time was 1 second.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+
+
+COLLECT STATISTICS tmp_DFR_Plan_Cust_Counts_FF;
+
+ *** Update completed. One row changed. 
+ *** Total elapsed time was 1 second.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+
+
+
+DELETE FROM Tmp_Working_Days;
+
+ *** Delete completed. 5 rows removed. 
+ *** Total elapsed time was 1 second.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+
+INSERT INTO Tmp_Working_Days
+(Work_Date)
+SELECT 
+    Date_Valid
+FROM DFR_Plan_Customer_Counts_FF
+GROUP BY 1
+QUALIFY sum(1) over(order by Date_Valid DESC rows unbounded preceding) > 5
+3
+;
+
+ *** Insert completed. No rows added. 
+ *** Total elapsed time was 1 second.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+
+DELETE FROM DFR_Plan_Customer_Counts_FF WHERE Date_Valid IN (SELECT Work_Da
+te FROM Tmp_Working_Days) OR
+Date_Valid = dwkb_meta.V_MD_DWE_Date.DWE_Date;
+
+ *** Delete completed. No rows removed. 
+ *** Total elapsed time was 1 second.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+
+COLLECT STATISTICS DFR_Plan_Customer_Counts_FF;
+
+ *** Update completed. One row changed. 
+ *** Total elapsed time was 1 second.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+
+
+INSERT INTO DFR_Plan_Customer_Counts_FF
+(
+  Date_Valid          
+  ,Node_Code           
+  ,Service_Segment_Code
+  ,WFF_Client_Saldo    
+)
+SELECT
+  Date_Valid          
+  ,Node_Code           
+  ,Service_Segment_Code
+  ,(CASE WHEN WFF_Client_Saldo  > 999 THEN 999 
+        WHEN WFF_Client_Saldo  < -999 THEN -999 ELSE WFF_Client_Saldo END)
+
+FROM tmp_DFR_Plan_Cust_Counts_FF 
+;
+
+ *** Insert completed. 5742 rows added. 
+ *** Total elapsed time was 1 second.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+
+COLLECT STATISTICS DFR_Plan_Customer_Counts_FF;
+
+ *** Update completed. One row changed. 
+ *** Total elapsed time was 1 second.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+
+
+
+--COLLECT STATISTICS DFR_Plan_Customer_Counts_FF;
+
+drop table tmp_DFr_Plan_Client_Sum;
+
+ *** Table has been dropped. 
+ *** Total elapsed time was 1 second.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+drop table tmp_DFr_Customer_IN_Counts;
+
+ *** Table has been dropped. 
+ *** Total elapsed time was 1 second.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+drop table tmp_DFR_Plan_Cust_Counts_FF;
+
+ *** Table has been dropped. 
+ *** Total elapsed time was 1 second.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+
+EXEC dwkb_meta.MD_Script_Times_Upd(Script_Code = 'TDFRPCCF');
+
+ *** Update completed. One row changed. 
+ *** Total elapsed time was 1 second.
+
+
++---------+---------+---------+---------+---------+---------+---------+----
+
+.IF ERRORCODE > 0 THEN .QUIT 8;
++---------+---------+---------+---------+---------+---------+---------+----
+                                                                                
+.QUIT 0
+ *** You are now logged off from the DBC.
+ *** Exiting BTEQ...
+ *** RC (return code) = 0 

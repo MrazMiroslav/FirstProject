@@ -1,0 +1,375 @@
+/********1*********2*********3*********4*********5*********6*********/
+-- Code: TSHTMPM
+-- Name: TSHTMPM.txt
+-- Utility: BTEQ
+-- Mutation: m_performrep_ts
+-- Type: Transformaèní
+-- Description: Skript T-fáze plnící tabulku
+--              Sales_Heatmap_M v datamartu m_performrep_ts
+-- Run when: Plnìní martu m_performrep_ts.
+--           Spouští se v procesu mìsíènì.
+-- User: trf_marts
+-- Repeatable: Pokud nebyl dokonèen, lze opakovat.
+-- Documentation: m_performrep_ts.pdm
+-- Date used: 2006-01-30
+/********************************************************************/
+-- V_MD_DWE_Date: ano
+/********************************************************************/
+--  RJA * 2005-12-20 FIRST WRITTEN
+-- Changes:
+--  RSO * 2006-02-06 Pridana filtrace na Date_Valid zdrojovych tabulek
+--        Zmena konstanty vkladane do MD_Report_Date tabulky z SGSM na HTMM 
+/********************************************************************/
+
+--.RUN FILE='i:\IFSec\InformaticaServer\CtlFiles\logon_trf_marts.txt'
+
+.SET MAXERROR 1
+
+DATABASE m_performrep_ts;
+
+/**** IF NOT ULTIMO THEN EXIT **********************************************/
+SELECT 
+   Month_End_Date                                                                 
+FROM dwkb_meta.V_Month_Date                                                      
+WHERE EXTRACT(MONTH FROM Month_End_Date) <> EXTRACT(MONTH FROM Month_End_Date+1);                                              
+
+.IF ACTIVITYCOUNT = 0 THEN EXIT 0; 
+
+.SET ERRORLEVEL UNKNOWN SEVERITY 16;
+.SET ERROROUT STDOUT;
+.SET ERRORLEVEL 3807 SEVERITY 0;
+
+/* probably drop of tmp tables */
+
+.SET ERRORLEVEL 3807 SEVERITY 8;
+
+/*************** MD_SCRIPT_TIMES.SCRIPT_START ***********************/
+
+--EXEC dwkb_meta.MD_Script_Times_Ins(Script_Code = 'TSHTMPM');
+
+
+
+
+/****START***** create tmp tables *****/
+
+--Tabulka obsahuje datum krajni hranice pro mazani
+
+CREATE VOLATILE TABLE Tmp_End_Of_Year
+(
+   Date_Valid DATE FORMAT 'YYYY-MM-DD'
+)
+ON COMMIT PRESERVE ROWS;
+
+
+
+
+/****START***** insert into tmp tables *****/
+
+insert into Tmp_End_Of_Year
+(Date_Valid)
+select cast(
+            (EXTRACT(YEAR FROM dwkb_meta.V_Month_Date.Month_End_Date) - 1)||'-12-31'
+              AS DATE FORMAT 'YYYY-MM-DD'
+           )
+;
+
+
+
+insert into gt_DM_Plan_Prod_Sum_FF
+(
+    Date_Valid
+    ,Node_Code
+    ,Service_Segment_Code
+    ,Product_Group_Code
+    ,MFF_Product_Count_In
+    ,MFF_Product_Amt_In_CZK
+    ,MFF_Product_Count
+    ,MFF_Product_Avg_Balance_Credit
+    ,MFF_Product_Avg_Balance_Debit
+    ,MFF_Product_Avg_Balance_Other
+    ,YFF_Product_Count_In
+    ,YFF_Product_Amt_In_CZK
+    ,MFF_Client_Saldo
+    ,YFF_Client_Saldo
+)
+
+select
+    PPS.Date_Valid
+    ,PPS.Node_Code
+    ,PPS.Service_Segment_Code
+    ,PPS.Product_Group_Code
+    ,MFF_Product_Count_In
+    ,MFF_Product_Amt_In_CZK
+    ,MFF_Product_Count
+    ,MFF_Product_Avg_Balance_Credit
+    ,MFF_Product_Avg_Balance_Debit
+    ,MFF_Product_Avg_Balance_Other
+    ,YFF_Product_Count_In
+    ,YFF_Product_Amt_In_CZK
+    ,NULL AS MFF_Client_Saldo
+    ,NULL AS YFF_Client_Saldo    
+from m_performrep_ts.DM_Plan_Prod_Sum_FF PPS
+where PPS.Date_Valid = dwkb_meta.V_Month_Date.Month_End_Date
+union
+
+select
+    DCC.Date_Valid
+    ,DCC.Node_Code
+    ,DCC.Service_Segment_Code
+    ,'XXXXXXXXXX' as Product_Group_Code
+    ,NULL as MFF_Product_Count_In
+    ,NULL as MFF_Product_Amt_In_CZK
+    ,NULL as MFF_Product_Count
+    ,NULL as MFF_Product_Avg_Balance_Credit
+    ,NULL as MFF_Product_Avg_Balance_Debit
+    ,NULL as MFF_Product_Avg_Balance_Other
+    ,NULL as YFF_Product_Count_In
+    ,NULL as YFF_Product_Amt_In_CZK
+    ,DCC.MFF_Client_Saldo
+    ,DCC.YFF_Client_Saldo    
+from m_performrep_ts.DM_Plan_Customer_Counts_FF DCC
+where DCC.Date_Valid = dwkb_meta.V_Month_Date.Month_End_Date
+;
+
+
+collect statistics on temporary gt_DM_Plan_Prod_Sum_FF;
+
+
+/*****  Plneni cilove tabulky a historicke tabulky  ******/
+
+
+/* Plneni historicke DM tabulky */
+
+delete from m_performrep_ts.DM_Sales_Heatmap SH where SH.Date_Valid not between 
+                          ADD_MONTHS(Tmp_End_Of_Year.Date_Valid,-48) AND ADD_MONTHS(dwkb_meta.V_Month_Date.Month_End_Date,-12);
+
+COLLECT STATISTICS m_performrep_ts.DM_Sales_Heatmap;
+
+insert into m_performrep_ts.DM_Sales_Heatmap
+(
+    Date_Valid
+    ,Node_Code
+    ,Service_Segment_Code
+    ,Product_Group_Code
+    ,Child_Node_Code
+    ,Child_Node_Short_Name
+    ,Child_Node_Indicator
+    ,Client_Target_Indicator
+    ,Product_Group_Desc
+    ,Product_Desc
+    ,Product_Sort
+    ,MFF_Product_Count_In
+    ,MFF_Product_Amt_In_CZK
+    ,YFF_Product_Count_In
+    ,YFF_Product_Amt_In_CZK
+    ,MFF_Product_Count
+    ,MFF_Product_Avg_Balance
+)
+select
+    Date_Valid
+    ,Node_Code
+    ,Service_Segment_Code
+    ,Product_Group_Code
+    ,Child_Node_Code
+    ,Child_Node_Short_Name
+    ,Child_Node_Indicator
+    ,Client_Target_Indicator
+    ,Product_Group_Desc
+    ,Product_Desc
+    ,Product_Sort
+    ,MFF_Product_Count_In
+    ,MFF_Product_Amt_In_CZK
+    ,YFF_Product_Count_In
+    ,YFF_Product_Amt_In_CZK
+    ,MFF_Product_Count
+    ,MFF_Product_Avg_Balance
+from m_performrep_ts.Sales_Heatmap_M
+where Date_Valid < ADD_MONTHS(dwkb_meta.V_Month_Date.Month_End_Date,-12)
+;
+
+collect statistics on m_performrep_ts.DM_Sales_Heatmap;
+
+
+
+/* Plneni cilove tabulky */
+
+delete from m_performrep_ts.Sales_Heatmap_M where Date_Valid < 
+                          ADD_MONTHS(dwkb_meta.V_Month_Date.Month_End_Date,-12);
+
+delete from m_performrep_ts.Sales_Heatmap_M WHERE Date_Valid = dwkb_meta.V_Month_Date.Month_End_Date;
+ 
+COLLECT STATISTICS m_performrep_ts.Sales_Heatmap_M;
+
+
+insert into m_performrep_ts.Sales_Heatmap_M
+(
+    Date_Valid
+    ,Node_Code
+    ,Service_Segment_Code
+    ,Product_Group_Code
+    ,Child_Node_Code
+    ,Child_Node_Short_Name
+    ,Child_Node_Indicator
+    ,Client_Target_Indicator
+    ,Product_Group_Desc
+    ,Product_Desc
+    ,Product_Sort
+    ,MFF_Product_Count_In
+    ,MFF_Product_Amt_In_CZK
+    ,YFF_Product_Count_In
+    ,YFF_Product_Amt_In_CZK
+    ,MFF_Product_Count
+    ,MFF_Product_Avg_Balance
+)
+select
+    PPS.Date_Valid as Date_Valid
+    ,PPS.Node_Code as Node_Code
+    ,PPS.Service_Segment_Code as Service_Segment_Code
+    ,PPS.Product_Group_Code as Product_Group_Code
+    ,PPS2.Node_Code as Child_Node_Code
+    ,PPS.Node_Short_Name as Child_Node_Short_Name 
+    ,case
+        when PPS.Node_Code = PPS2.Node_Code
+        then 'N'
+        else 'Y'
+     end Child_Node_Indicator
+    ,case
+        when PPS.Product_Group_Code = 'XXXXXXXXXX'
+        then 'Y'
+        else 'N'
+     end Client_Target_Indicator
+    ,case
+        when Client_Target_Indicator = 'Y' THEN 'Client Saldo FF'
+        else (coalesce(VCP.Product_Group_Name_EN_1,VCP2.Product_Group_Name_EN_1,''))
+     end as Product_Group_Desc
+    ,case
+        when Client_Target_Indicator = 'Y'
+          then ''
+        else (coalesce(VCP.Product_Group_Name_EN_3,VCP2.Product_Group_Name_EN_2,''))
+     end Product_Desc
+    ,case
+        when Client_Target_Indicator = 'Y'
+          then 99999900
+        else (coalesce(VCP.Product_Group_Sort_3,VCP2.Product_Group_Sort_2,99999900))          
+     end Product_Sort
+    ,case
+        when Client_Target_Indicator = 'Y'
+          then PPS2.MFF_Client_Saldo
+          else PPS2.MFF_Product_Count_In
+     end MFF_Product_Count_In
+    ,case
+        when Client_Target_Indicator = 'Y'
+          then NULL
+          else PPS2.MFF_Product_Amt_In_CZK
+     end MFF_Product_Amt_In_CZK
+    ,case
+        when Client_Target_Indicator = 'Y'
+          then PPS2.YFF_Client_Saldo
+          else PPS2.YFF_Product_Count_In
+     end YFF_Product_Count_In
+    ,case
+        when Client_Target_Indicator = 'Y'
+          then NULL
+          else PPS2.YFF_Product_Amt_In_CZK
+     end YFF_Product_Amt_In_CZK
+    ,case
+        when Client_Target_Indicator = 'Y'
+          then PPS2.MFF_Client_Saldo
+          else PPS2.MFF_Product_Count
+     end MFF_Product_Count
+    ,case
+        when Client_Target_Indicator = 'Y'
+          then NULL
+          else (coalesce(PPS2.MFF_Product_Avg_Balance_Credit,0))
+               + (coalesce(PPS2.MFF_Product_Avg_Balance_Debit,0))
+               + (coalesce(PPS2.MFF_Product_Avg_Balance_Other,0))
+     end MFF_Product_Avg_Balance
+from
+(
+select
+    PPS.Date_Valid as Date_Valid
+    ,PPS.Service_Segment_Code as Service_Segment_Code
+    ,PPS.Product_Group_Code as Product_Group_Code
+    ,PPS.Node_Code as Node_Code
+    ,OT.Node_Code as Child_Node_Code
+    ,OT.Node_Short_Name as Node_Short_Name
+from gt_DM_Plan_Prod_Sum_FF PPS
+inner join m_performrep_ts.D_PR_Org_Tree OT
+on PPS.Node_Code = OT.Parent_Node_Code
+union
+select
+    PPS.Date_Valid as Date_Valid
+    ,PPS.Service_Segment_Code as Service_Segment_Code
+    ,PPS.Product_Group_Code as Product_Group_Code
+    ,PPS.Node_Code as Node_Code
+    ,OT.Node_Code as Child_Node_Code
+    ,OT.Node_Short_Name as Node_Short_Name
+from gt_DM_Plan_Prod_Sum_FF PPS
+inner join m_performrep_ts.D_PR_Org_Tree OT
+on PPS.Node_Code = OT.Node_Code
+where OT.Node_Level < 8
+) PPS
+
+inner join gt_DM_Plan_Prod_Sum_FF PPS2
+on PPS2.Node_Code = PPS.Child_Node_Code
+   and PPS2.Date_Valid = PPS.Date_Valid
+   and PPS2.Service_Segment_Code = PPS.Service_Segment_Code
+   and PPS2.Product_Group_Code = PPS.Product_Group_Code
+
+left outer join
+(
+select distinct
+    VCP.Product_Group_Code_3
+    ,VCP.Product_Group_Name_EN_1
+    ,VCP.Product_Group_Name_EN_3
+    ,VCP.Product_Group_Sort_3
+from V_C_Product_MKTG2 VCP
+) VCP
+on PPS.Product_Group_Code <> 'XXXXXXXXXX'
+and PPS.Product_Group_Code = VCP.Product_Group_Code_3
+
+left outer join
+(
+select distinct
+    VCP.Product_Group_Code_2
+    ,VCP.Product_Group_Name_EN_1
+    ,VCP.Product_Group_Name_EN_2
+    ,VCP.Product_Group_Sort_2
+from V_C_Product_MKTG2 VCP
+) VCP2
+on PPS.Product_Group_Code <> 'XXXXXXXXXX'
+and PPS.Product_Group_Code = VCP2.Product_Group_Code_2
+
+;
+
+collect statistics on m_performrep_ts.Sales_Heatmap_M;
+
+delete from Sales_Heatmap_M where  (MFF_Product_Count_In IS NULL and MFF_Product_Amt_In_CZK IS  NULL and YFF_Product_Count_In IS NULL and YFF_Product_Amt_In_CZK IS NULL
+and MFF_Product_Count IS NULL and (MFF_Product_Avg_Balance IS  NULL or MFF_Product_Avg_Balance = 0));
+
+
+DELETE FROM MD_Report_Date WHERE Date_Valid = dwkb_meta.V_Month_Date.Month_End_Date AND Report_Type = 'HTMM' AND Report_Period = 'M';
+
+INSERT INTO MD_Report_Date
+(
+    Date_Valid     
+    ,Report_Type    
+    ,Report_Period  
+    ,Reported_Period
+)
+SELECT
+  dwkb_meta.V_Month_Date.Month_End_Date
+  ,'HTMM'
+  ,'M'
+  ,CAST(TRIM(CAST(dwkb_meta.V_Month_Date.Month_End_Date AS DATE FORMAT 'MM.YYYY') ) AS CHAR(7))
+;
+
+collect statistics m_performrep_ts.MD_Report_Date;
+
+
+
+--EXEC dwkb_meta.MD_Script_Times_Upd(Script_Code = 'TSHTMPM');
+
+.IF ERRORCODE > 0 THEN .QUIT 8;                                                 
+                                                                                
+.QUIT 0

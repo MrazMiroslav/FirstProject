@@ -1,0 +1,561 @@
+/********1*********2*********3*********4*********5*********6*********/
+-- Code: TDMPCCFF
+-- Name: TDMPCCFF.txt
+-- Utility: BTEQ
+-- Mutation: m_performrep_ts
+-- Type: Transformacni
+-- Description: Skript T-faze plni tabulku
+--              DM_Plan_Customer_Counts_FF v datamartu m_performrep_ts
+-- Run when: Plni martu m_performrep_ts.
+--           Spouti v procese ultimove transformace.
+-- User: load_performrep
+-- Repeatable: Pokud nebyl dokoncen, lze opakovat.
+-- Documentation: m_performrep_ts.pdm
+-- Date used: 200X-XX-XX
+/********************************************************************/
+-- V_MD_DWE_Date: ano
+/********************************************************************/
+--  MMR * 2005-12-20 FIRST WRITTEN
+-- Changes:
+/********************************************************************/
+
+.RUN FILE='i:\IFSec\InformaticaServer\CtlFiles\logon_trf_marts.txt'
+
+.SET MAXERROR 1
+
+DATABASE m_performrep_ts;
+
+SELECT 
+   DWE_DATE                                                                 
+FROM dwkb_meta.V_MD_DWE_Date                                                      
+WHERE EXTRACT(MONTH FROM DWE_DATE) <> EXTRACT(MONTH FROM DWE_DATE+1);                                              
+                                                                                
+.IF ACTIVITYCOUNT = 0 THEN EXIT 0; 
+
+
+.SET ERRORLEVEL UNKNOWN SEVERITY 16;
+.SET ERROROUT STDOUT;
+.SET ERRORLEVEL 3807 SEVERITY 0;
+
+/* probably drop of tmp tables */
+
+drop table tmp_DM_Customer_IN_Counts;
+drop table Tmp_BoY_Dates;
+drop table tmp_DM_Plan_Customer_Counts_FF;
+
+
+.SET ERRORLEVEL 3807 SEVERITY 8;
+
+/*************** MD_SCRIPT_TIMES.SCRIPT_START ***********************/
+
+EXEC dwkb_meta.MD_Script_Times_Ins(Script_Code = 'TDMPCCFF');
+
+
+/****START***** create tmp tables *****/
+
+--Tabulka obsahuje datum posledniho dne minuleho roku
+CREATE VOLATILE TABLE Tmp_BoY_Dates
+(
+   BoY DATE FORMAT 'YYYY-MM-DD'
+)
+ON COMMIT PRESERVE ROWS;
+
+
+--mnozstvi spravovanych klientu v portfoliu aktualni jednotce
+create SET table tmp_DM_Customer_IN_Counts 
+(
+    Date_Valid                      DATE FORMAT 'YYYY-MM-DD'    not null 
+    ,Service_Segment                CHAR(3)  not null
+    ,Org_Unit_Type                  CHAR(3)  not null                      
+    ,Org_Unit_Code                  CHAR(5)  not null                   
+    ,Org_Unit_Code_Suppl            CHAR(3)  not null
+    ,Org_Unit_Level                 CHAR(1)  not null                      
+    ,Officer_Id                     CHAR(3)   
+    ,Client_Count_In                INTEGER  not null
+    ,Client_Count_Out               INTEGER  not null 
+)
+UNIQUE PRIMARY INDEX tmp_DM_Customer_IN_Counts_UPI (Date_Valid
+                                            ,Service_Segment
+                                            ,Org_Unit_Type
+                                            ,Org_Unit_Code
+                                            ,Org_Unit_Code_Suppl
+                                            ,Org_Unit_Level 
+                                            ,Officer_Id);
+
+COLLECT STATISTICS tmp_DM_Customer_IN_Counts index tmp_DM_Customer_IN_Counts_UPI ;
+
+
+--tabulka obsahuje data pred vlozenim do hlavni tabulky
+create SET table tmp_DM_Plan_Customer_Counts_FF 
+(
+    Date_Valid                     DATE                 not null,
+    Node_Code                      CHAR(17)             not null,
+    Service_Segment_Code           CHAR(3)              not null,
+    MFF_Client_Saldo               DECIMAL(17,2)                ,
+    YFF_Client_Saldo               DECIMAL(17,2)                
+)
+unique primary index DM_Plan_Cust_Counts_FF_UPI ( Date_Valid, Node_Code, Service_Segment_Code );
+
+collect statistics on tmp_DM_Plan_Customer_Counts_FF index DM_Plan_Cust_Counts_FF_UPI;
+
+/****END***** create tmp tables *****/
+
+--INSERT GLOBAL TABLES FOR NET AND GROSS SALES
+
+INSERT INTO Tmp_BoY_Dates
+(
+  BoY
+)
+SELECT CAST(
+            (EXTRACT(YEAR FROM dwkb_meta.V_MD_DWE_Date.DWE_Date))||'-01-31'
+              AS DATE FORMAT 'YYYY-MM-DD'
+                )
+;
+
+----------------------------------------------------------------------------------------------
+--pocet zakazniku obsluhujucich aktualni jednotkou aktualni mesic
+INSERT INTO tmp_DM_Customer_IN_Counts
+(
+    Date_Valid          
+    ,Service_Segment     
+    ,Org_Unit_Type      
+    ,Org_Unit_Code      
+    ,Org_Unit_Code_Suppl
+    ,Org_Unit_Level
+    ,Officer_Id       
+    ,Client_Count_In
+    ,Client_Count_Out       
+)
+SELECT
+    A.Date_Valid
+    ,CASE
+      WHEN B.Management_Type = 'MC'
+        THEN 'MEM'
+      WHEN SUBSTR(A.Segment_Code_12,1,1) = 'B' AND B.Management_Type = 'XX'
+        THEN 'SB'
+      WHEN SUBSTR(A.Segment_Code_12,1,1) = 'P' AND B.Management_Type = 'XX'
+        THEN 'IND'
+    END Service_Segment   
+    ,B.Org_Unit_Type_6      
+    ,B.Org_Unit_Code_6      
+    ,B.Org_Unit_Code_Suppl_6
+    ,'8'
+    ,SUBSTR(A.Officer_Code,7,3) AS Officer_Ide
+    ,SUM(Client_Count_In)
+    ,SUM(Client_Count_Out)
+FROM V_DM_Cust_Childless_Counts A
+LEFT OUTER JOIN dwkb.R_Unit_Renumber G
+ON SUBSTR(A.Officer_Code,1,6) = G.Original_Unit_Code
+AND A.Date_Valid BETWEEN G.Start_Date AND G.End_Date
+INNER JOIN V_D_Org_Business B
+ON COALESCE(G.Unit_Code || SUBSTR(A.Officer_Code,7,3),A.Officer_Code) = B.Officer_Code
+GROUP BY A.Date_Valid, Service_Segment, B.Org_Unit_Type_6, B.Org_Unit_Code_6, B.Org_Unit_Code_Suppl_6, Officer_Ide
+WHERE A.Date_Valid BETWEEN Tmp_BoY_Dates.BoY AND dwkb_meta.V_MD_DWE_Date.DWE_Date
+AND B.Management_Type IN ('XX', 'MC') AND A.Segment_Code_12 <> 'XX'
+
+;
+
+COLLECT STATISTICS tmp_DM_Customer_IN_Counts
+;
+
+-------------------------
+--pocet zakazniku obsluhujucich aktualni jednotkou aktualni mesic
+INSERT INTO tmp_DM_Customer_IN_Counts
+(
+    Date_Valid          
+    ,Service_Segment     
+    ,Org_Unit_Type      
+    ,Org_Unit_Code      
+    ,Org_Unit_Code_Suppl
+    ,Org_Unit_Level
+    ,Officer_Id       
+    ,Client_Count_In
+    ,Client_Count_Out       
+)
+SELECT
+    A.Date_Valid
+    ,CASE
+      WHEN B.Management_Type = 'MC'
+        THEN 'MEM'
+      WHEN SUBSTR(A.Segment_Code_12,1,1) = 'B' AND B.Management_Type = 'XX'
+        THEN 'SB'
+      WHEN SUBSTR(A.Segment_Code_12,1,1) = 'P' AND B.Management_Type = 'XX'
+        THEN 'IND'
+    END Service_Segment   
+    ,B.Org_Unit_Type_6      
+    ,B.Org_Unit_Code_6      
+    ,B.Org_Unit_Code_Suppl_6
+    ,'6'
+    ,NULL
+    ,SUM(Client_Count_In)
+    ,SUM(Client_Count_Out)
+FROM V_DM_Cust_Childless_Counts A
+LEFT OUTER JOIN dwkb.R_Unit_Renumber G
+ON SUBSTR(A.Officer_Code,1,6) = G.Original_Unit_Code
+AND A.Date_Valid BETWEEN G.Start_Date AND G.End_Date
+INNER JOIN V_D_Org_Business B
+ON COALESCE(G.Unit_Code || SUBSTR(A.Officer_Code,7,3),A.Officer_Code) = B.Officer_Code
+GROUP BY A.Date_Valid, Service_Segment, B.Org_Unit_Type_6, B.Org_Unit_Code_6, B.Org_Unit_Code_Suppl_6
+WHERE A.Date_Valid BETWEEN Tmp_BoY_Dates.BoY AND dwkb_meta.V_MD_DWE_Date.DWE_Date
+AND B.Management_Type IN ('XX', 'MC') AND A.Segment_Code_12 <> 'XX' 
+
+;
+
+COLLECT STATISTICS tmp_DM_Customer_IN_Counts
+;
+
+-------------------------
+--pocet zakazniku obsluhujucich aktualni jednotkou aktualni mesic
+INSERT INTO tmp_DM_Customer_IN_Counts
+(
+    Date_Valid          
+    ,Service_Segment     
+    ,Org_Unit_Type      
+    ,Org_Unit_Code      
+    ,Org_Unit_Code_Suppl
+    ,Org_Unit_Level
+    ,Officer_Id       
+    ,Client_Count_In
+    ,Client_Count_Out       
+)
+SELECT
+    A.Date_Valid
+    ,CASE
+      WHEN B.Management_Type = 'MC'
+        THEN 'MEM'
+      WHEN SUBSTR(A.Segment_Code_12,1,1) = 'B' AND B.Management_Type = 'XX'
+        THEN 'SB'
+      WHEN SUBSTR(A.Segment_Code_12,1,1) = 'P' AND B.Management_Type = 'XX'
+        THEN 'IND'
+    END Service_Segment   
+    ,B.Org_Unit_Type_4      
+    ,B.Org_Unit_Code_4      
+    ,B.Org_Unit_Code_Suppl_4
+    ,'4'
+    ,NULL
+    ,SUM(Client_Count_In)
+    ,SUM(Client_Count_Out)
+FROM V_DM_Cust_Childless_Counts A
+LEFT OUTER JOIN dwkb.R_Unit_Renumber G
+ON SUBSTR(A.Officer_Code,1,6) = G.Original_Unit_Code
+AND A.Date_Valid BETWEEN G.Start_Date AND G.End_Date
+INNER JOIN V_D_Org_Business B
+ON COALESCE(G.Unit_Code || SUBSTR(A.Officer_Code,7,3),A.Officer_Code) = B.Officer_Code
+GROUP BY A.Date_Valid, Service_Segment, B.Org_Unit_Type_4, B.Org_Unit_Code_4, B.Org_Unit_Code_Suppl_4
+WHERE A.Date_Valid BETWEEN Tmp_BoY_Dates.BoY AND dwkb_meta.V_MD_DWE_Date.DWE_Date
+AND B.Management_Type IN ('XX', 'MC') AND A.Segment_Code_12 <> 'XX'
+
+;
+
+COLLECT STATISTICS tmp_DM_Customer_IN_Counts
+;
+
+-------------------------
+--pocet zakazniku obsluhujucich aktualni jednotkou aktualni mesic
+INSERT INTO tmp_DM_Customer_IN_Counts
+(
+    Date_Valid          
+    ,Service_Segment     
+    ,Org_Unit_Type      
+    ,Org_Unit_Code      
+    ,Org_Unit_Code_Suppl
+    ,Org_Unit_Level
+    ,Officer_Id       
+    ,Client_Count_In
+    ,Client_Count_Out       
+)
+SELECT
+    A.Date_Valid
+    ,CASE
+      WHEN B.Management_Type = 'MC'
+        THEN 'MEM'
+      WHEN SUBSTR(A.Segment_Code_12,1,1) = 'B' AND B.Management_Type = 'XX'
+        THEN 'SB'
+      WHEN SUBSTR(A.Segment_Code_12,1,1) = 'P' AND B.Management_Type = 'XX'
+        THEN 'IND'
+    END Service_Segment   
+    ,B.Org_Unit_Type_3      
+    ,B.Org_Unit_Code_3      
+    ,B.Org_Unit_Code_Suppl_3
+    ,'3'
+    ,NULL
+    ,SUM(Client_Count_In)
+    ,SUM(Client_Count_Out)
+FROM V_DM_Cust_Childless_Counts A
+LEFT OUTER JOIN dwkb.R_Unit_Renumber G
+ON SUBSTR(A.Officer_Code,1,6) = G.Original_Unit_Code
+AND A.Date_Valid BETWEEN G.Start_Date AND G.End_Date
+INNER JOIN V_D_Org_Business B
+ON COALESCE(G.Unit_Code || SUBSTR(A.Officer_Code,7,3),A.Officer_Code) = B.Officer_Code
+GROUP BY A.Date_Valid, Service_Segment, B.Org_Unit_Type_3, B.Org_Unit_Code_3, B.Org_Unit_Code_Suppl_3
+WHERE A.Date_Valid BETWEEN Tmp_BoY_Dates.BoY AND dwkb_meta.V_MD_DWE_Date.DWE_Date
+AND B.Management_Type IN ('XX', 'MC')  AND A.Segment_Code_12 <> 'XX' 
+
+;
+
+COLLECT STATISTICS tmp_DM_Customer_IN_Counts
+;
+-------------------------
+--pocet zakazniku obsluhujucich aktualni jednotkou aktualni mesic
+INSERT INTO tmp_DM_Customer_IN_Counts
+(
+    Date_Valid          
+    ,Service_Segment     
+    ,Org_Unit_Type      
+    ,Org_Unit_Code      
+    ,Org_Unit_Code_Suppl
+    ,Org_Unit_Level
+    ,Officer_Id       
+    ,Client_Count_In
+    ,Client_Count_Out       
+)
+SELECT
+    A.Date_Valid
+    ,CASE
+      WHEN B.Management_Type = 'MC'
+        THEN 'MEM'
+      WHEN SUBSTR(A.Segment_Code_12,1,1) = 'B' AND B.Management_Type = 'XX'
+        THEN 'SB'
+      WHEN SUBSTR(A.Segment_Code_12,1,1) = 'P' AND B.Management_Type = 'XX'
+        THEN 'IND'
+    END Service_Segment   
+    ,B.Org_Unit_Type_2      
+    ,B.Org_Unit_Code_2      
+    ,B.Org_Unit_Code_Suppl_2
+    ,'2'
+    ,NULL
+    ,SUM(Client_Count_In)
+    ,SUM(Client_Count_Out)
+FROM V_DM_Cust_Childless_Counts A
+LEFT OUTER JOIN dwkb.R_Unit_Renumber G
+ON SUBSTR(A.Officer_Code,1,6) = G.Original_Unit_Code
+AND A.Date_Valid BETWEEN G.Start_Date AND G.End_Date
+INNER JOIN V_D_Org_Business B
+ON COALESCE(G.Unit_Code || SUBSTR(A.Officer_Code,7,3),A.Officer_Code) = B.Officer_Code
+GROUP BY A.Date_Valid, Service_Segment, B.Org_Unit_Type_2, B.Org_Unit_Code_2, B.Org_Unit_Code_Suppl_2
+WHERE A.Date_Valid BETWEEN Tmp_BoY_Dates.BoY AND dwkb_meta.V_MD_DWE_Date.DWE_Date
+AND B.Management_Type IN ('XX', 'MC')  AND A.Segment_Code_12 <> 'XX'
+
+;
+
+COLLECT STATISTICS tmp_DM_Customer_IN_Counts
+;
+
+-- END
+
+--start
+
+INSERT INTO tmp_DM_Customer_IN_Counts
+(
+    Date_Valid          
+    ,Service_Segment     
+    ,Org_Unit_Type      
+    ,Org_Unit_Code      
+    ,Org_Unit_Code_Suppl
+    ,Org_Unit_Level
+    ,Officer_Id       
+    ,Client_Count_In
+    ,Client_Count_Out       
+)
+SELECT
+  dwkb_meta.V_MD_DWE_Date.DWE_Date AS Date_Valid
+  ,TTARGET.Service_Segment_Code AS Service_Segment_Code
+  ,TTARGET.Org_Unit_Type
+  ,TTARGET.Org_Unit_Code
+  ,TTARGET.Org_Unit_Code_Suppl
+  ,CAST(TTARGET.Org_Unit_Level AS CHAR(1))
+  ,TTARGET.Officer_Id
+  ,0 AS   Client_Count_In       
+  ,0 AS   Client_Count_Out       
+
+FROM DM_Plan_Customer_Counts TTARGET
+
+LEFT OUTER JOIN tmp_DM_Customer_IN_Counts A
+ON  A.Service_Segment       = TTARGET.Service_Segment_Code     
+AND A.Org_Unit_Type         = TTARGET.Org_Unit_Type      
+AND A.Org_Unit_Code         = TTARGET.Org_Unit_Code      
+AND A.Org_Unit_Code_Suppl   = TTARGET.Org_Unit_Code_Suppl
+AND A.Org_Unit_Level        = TTARGET.Org_Unit_Level
+AND COALESCE(A.Officer_Id,'XXX')  = COALESCE(TTARGET.Officer_Id,'XXX')
+AND A.Date_Valid            = TTARGET.Date_Valid
+
+WHERE A.Service_Segment IS NULL 
+AND TTARGET.Date_Valid = dwkb_meta.V_MD_DWE_Date.DWE_Date
+;
+--end
+COLLECT STATISTICS ON tmp_DM_Customer_IN_Counts;
+
+--INSERT 
+
+INSERT INTO tmp_DM_Plan_Customer_Counts_FF
+(
+    Date_Valid          
+    ,Node_Code           
+    ,Service_Segment_Code
+    ,MFF_Client_Saldo    
+    ,YFF_Client_Saldo    
+)
+SELECT
+  A.Date_Valid AS Date_Valid
+  ,CASE
+    WHEN A.Org_Unit_Level = '8' AND A.Service_Segment = 'MEM'
+      THEN 'RMM'||A.Org_Unit_Type||A.Org_Unit_Code||A.Org_Unit_Code_Suppl||A.Officer_Id
+    WHEN A.Org_Unit_Level = '8' AND (A.Service_Segment = 'IND' OR A.Service_Segment = 'SB')
+      THEN 'RMR'||A.Org_Unit_Type||A.Org_Unit_Code||A.Org_Unit_Code_Suppl||A.Officer_Id
+    WHEN A.Org_Unit_Level = '6'
+      THEN  'BRM'||A.Org_Unit_Type||A.Org_Unit_Code||A.Org_Unit_Code_Suppl||'XXX'
+    WHEN A.Org_Unit_Level = '4'
+      THEN 'GBM'||A.Org_Unit_Type||A.Org_Unit_Code||A.Org_Unit_Code_Suppl||'XXX'
+    WHEN A.Org_Unit_Level = '3'
+      THEN 'RGM'||A.Org_Unit_Type||A.Org_Unit_Code||A.Org_Unit_Code_Suppl||'XXX'
+    WHEN A.Org_Unit_Level = '2'
+      THEN 'DSM'||A.Org_Unit_Type||A.Org_Unit_Code||A.Org_Unit_Code_Suppl||'XXX'
+    END Node_Code
+  ,A.Service_Segment AS Service_Segment_Code
+  ,(CASE
+      	WHEN  (TTARGET.Client_Count_In_Plan <> TTARGET.Client_Count_Out_Plan)
+      		THEN CAST( 
+            ((CAST((A.Client_Count_In - A.Client_Count_Out) AS FLOAT) 
+            / (TTARGET.Client_Count_In_Plan - TTARGET.Client_Count_Out_Plan)) * 100) 
+                AS DECIMAL(17,2) ) 
+      	ELSE NULL
+     END) AS   MFF_Client_Saldo       
+  ,(CASE
+      	WHEN  (YTD_TTARGET.Client_Count_In <> YTD_TTARGET.Client_Count_Out)
+      		THEN CAST( 
+            ((CAST((YTD.Client_Count_In - YTD.Client_Count_Out) AS FLOAT) 
+            / (YTD_TTARGET.Client_Count_In - YTD_TTARGET.Client_Count_Out)) * 100) 
+                AS DECIMAL(17,2) ) 
+      	ELSE NULL
+     END) AS   YFF_Client_Saldo       
+
+FROM tmp_DM_Customer_IN_Counts A
+
+LEFT OUTER JOIN DM_Plan_Customer_Counts TTARGET
+ON  A.Service_Segment       = TTARGET.Service_Segment_Code     
+AND A.Org_Unit_Type         = TTARGET.Org_Unit_Type      
+AND A.Org_Unit_Code         = TTARGET.Org_Unit_Code      
+AND A.Org_Unit_Code_Suppl   = TTARGET.Org_Unit_Code_Suppl
+AND A.Org_Unit_Level        = TTARGET.Org_Unit_Level
+AND COALESCE(A.Officer_Id,'XXX')  = COALESCE(TTARGET.Officer_Id,'XXX')
+AND A.Date_Valid            = TTARGET.Date_Valid
+
+
+LEFT OUTER JOIN(
+SELECT
+    Service_Segment_Code
+    ,Org_Unit_Type       
+    ,Org_Unit_Code       
+    ,Org_Unit_Code_Suppl 
+    ,Org_Unit_Level      
+    ,Officer_Id          
+    ,SUM(Client_Count_In_Plan) Client_Count_In
+    ,SUM(Client_Count_Out_Plan) Client_Count_Out
+  FROM DM_Plan_Customer_Counts
+  WHERE Date_Valid BETWEEN Tmp_BoY_Dates.BoY AND dwkb_meta.V_MD_DWE_Date.DWE_Date
+  GROUP BY 1,2,3,4,5,6
+) YTD_TTARGET
+
+ON  A.Service_Segment       = YTD_TTARGET.Service_Segment_Code     
+AND A.Org_Unit_Type         = YTD_TTARGET.Org_Unit_Type      
+AND A.Org_Unit_Code         = YTD_TTARGET.Org_Unit_Code      
+AND A.Org_Unit_Code_Suppl   = YTD_TTARGET.Org_Unit_Code_Suppl
+AND A.Org_Unit_Level        = YTD_TTARGET.Org_Unit_Level
+AND COALESCE(A.Officer_Id,'XXX')  = COALESCE(YTD_TTARGET.Officer_Id,'XXX')
+
+  
+LEFT OUTER JOIN(
+SELECT 
+    Service_Segment     
+    ,Org_Unit_Type      
+    ,Org_Unit_Code      
+    ,Org_Unit_Code_Suppl
+    ,Org_Unit_Level
+    ,Officer_Id       
+    ,SUM(Client_Count_In) AS Client_Count_In
+    ,SUM(Client_Count_Out) AS Client_Count_Out      
+  FROM tmp_DM_Customer_IN_Counts
+  WHERE Date_Valid >= Tmp_BoY_Dates.BoY
+  GROUP BY 1,2,3,4,5,6
+) YTD
+
+ON  A.Service_Segment       = YTD.Service_Segment     
+AND A.Org_Unit_Type         = YTD.Org_Unit_Type      
+AND A.Org_Unit_Code         = YTD.Org_Unit_Code      
+AND A.Org_Unit_Code_Suppl   = YTD.Org_Unit_Code_Suppl
+AND A.Org_Unit_Level        = YTD.Org_Unit_Level
+AND COALESCE(A.Officer_Id,'XXX')  = COALESCE(YTD.Officer_Id,'XXX')
+
+WHERE A.Date_Valid = dwkb_meta.V_MD_DWE_Date.DWE_Date
+;
+
+
+COLLECT STATISTICS ON tmp_DM_Plan_Customer_Counts_FF;
+
+INSERT INTO tmp_DM_Plan_Customer_Counts_FF
+(
+       Date_Valid          
+      ,Node_Code                      
+      ,Service_Segment_Code           
+      ,MFF_Client_Saldo    
+      ,YFF_Client_Saldo    
+)
+SELECT 
+      Date_Valid                     
+      ,CASE
+        WHEN Service_Segment_Code = 'MEM' 
+          THEN 'HOC'||SUBSTR(Node_Code,4)                      
+        ELSE 'HOR'||SUBSTR(Node_Code,4)
+       END Node_Code
+      ,Service_Segment_Code           
+    ,MFF_Client_Saldo    
+    ,YFF_Client_Saldo    
+FROM tmp_DM_Plan_Customer_Counts_FF
+WHERE SUBSTR(Node_Code,1,3) = 'GBM'
+; 
+
+
+COLLECT STATISTICS tmp_DM_Plan_Customer_Counts_FF;
+
+
+/**************INSERT START INTO DM_NET_Sales_M***********************/
+DELETE FROM DM_Plan_Customer_Counts_FF WHERE Date_Valid < ADD_MONTHS(Tmp_BoY_Dates.BoY,-48) OR 
+Date_VAlid = dwkb_meta.V_MD_DWE_Date.DWE_Date;
+
+COLLECT STATISTICS DM_Plan_Customer_Counts_FF;
+
+
+INSERT INTO DM_Plan_Customer_Counts_FF
+(
+       Date_Valid          
+      ,Node_Code                      
+      ,Service_Segment_Code           
+      ,MFF_Client_Saldo    
+      ,YFF_Client_Saldo    
+)
+SELECT
+       Date_Valid          
+      ,Node_Code                      
+      ,Service_Segment_Code           
+      ,(CASE WHEN MFF_Client_Saldo  > 999 THEN 999 
+        WHEN MFF_Client_Saldo  < -999 THEN -999 ELSE MFF_Client_Saldo END)    
+      ,(CASE WHEN YFF_Client_Saldo  > 999 THEN 999 
+        WHEN YFF_Client_Saldo  < -999 THEN -999 ELSE YFF_Client_Saldo END)    
+FROM tmp_DM_Plan_Customer_Counts_FF 
+;  
+
+COLLECT STATISTICS DM_Plan_Customer_Counts_FF;
+
+
+
+--COLLECT STATISTICS DM_Plan_Customer_Counts_FF;
+
+drop table tmp_DM_Customer_IN_Counts;
+drop table Tmp_BoY_Dates;
+drop table tmp_DM_Plan_Customer_Counts_FF;
+
+EXEC dwkb_meta.MD_Script_Times_Upd(Script_Code = 'TDMPCCFF');
+
+.IF ERRORCODE > 0 THEN .QUIT 8;                                                 
+                                                                                
+.QUIT 0

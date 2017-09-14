@@ -1,0 +1,240 @@
+/********************************************************************/           
+/* ident: TMMPRSUM                                                  */           
+/* NAME         : TMMPRSUM.txt                                      */           
+/* VERSION      : 1.0                 (m_performrep_ts,dwkb_meta)   */           
+/* DATE USED    : ????/??/??                                        */           
+/* DESCRIPTION  : Plneni m_performrep_ts.DM_Prod_Sum                */           
+/*                                                                  */           
+/* REPEATABLE   : Y						    */
+/********************************************************************/           
+/* V_MD_DWE_Date nasazen                                            */           
+/********************************************************************/           
+/* VERSION * DATE      * COMMENTS                                   */           
+/* ------- * --------- * -------------------------------------------*/           
+/* 1.0 RSO * 20 DEC 05 * FIRST WRITTEN                              */                     
+/********************************************************************/           
+
+.RUN FILE='i:\IFSec\InformaticaServer\CtlFiles\logon_trf_marts.txt'
+                                                                                
+database m_performrep_ts;                                                         
+                                                                                
+/****** FIRST CHECK IF THE DATE IN MD_DWE_DATE IS END OF MONTH ******/           
+/************************ IF NOT THEN EXIT **************************/                                                                                           
+SELECT DWE_DATE                                                                 
+FROM dwkb_meta.V_MD_DWE_DATE                                                    
+WHERE EXTRACT(MONTH FROM DWE_DATE) <> EXTRACT(MONTH FROM DWE_DATE+1);           
+                                                                                
+.IF ACTIVITYCOUNT = 0 THEN EXIT 0;                                            
+                                                                                
+.SET ERRORLEVEL UNKNOWN SEVERITY 16;                                            
+.SET ERROROUT STDOUT;                                                           
+                                                                                
+/********** Projde DROP table u tabulky, ktera neexistuje  **********/           
+.SET ERRORLEVEL 3807 SEVERITY 0;                                                
+                                                                             
+.SET MAXERROR 1                                                                 
+                                                                                
+/********* NEProjde DROP table u tabulky, ktera neexistuje **********/                           
+.SET ERRORLEVEL 3807 SEVERITY 8;                                                
+                                                                                
+/***************** MD_SCRIPT_TIMES.SCRIPT_START *********************/                      
+exec dwkb_meta.MD_Script_Times_Ins(Script_Code = 'TMMPRSUM');                                                                                                  
+/********************************************************************/                    
+                                                       
+/********************** odmazani starych zaznamu ********************/                                                  
+DELETE DM_Prod_Sum                                                            
+WHERE EXTRACT(YEAR FROM DM_Prod_Sum.Date_Valid) <                               
+               EXTRACT(YEAR FROM dwkb_meta.V_MD_DWE_Date.DWE_Date)-4;           
+                                                                                
+/********************************************************************/                                                                                                        
+/***************** Naplneni cilove tabulky **************************/           
+/********************************************************************/                                                                                                                                                     
+INSERT INTO DM_Prod_Sum (                                                   
+   Date_Valid
+   ,Product_Status                                                               
+   ,Product_Code                                                                
+   ,Segment_Code_12                                                             
+   ,Business_Officer_Code                                                       
+   ,Service_Officer_Code                                                        
+   ,Credit_Debit_Indicator                                                      
+   ,Sector_SG_Code                                                              
+   ,Product_Amt_CZK                                                             
+   ,Product_Amt_In_CZK                                                          
+   ,Product_Count                                                               
+   ,Product_Count_In                                                            
+   ,Product_Count_Out
+   ,Product_Avg_Balance_Credit
+   ,Product_Avg_Balance_Debit
+   ,Product_Avg_Balance_Other)                                                         
+SELECT
+   Date_Valid
+   ,Product_Status
+   ,Product_Code
+   ,Segment_Code_12
+   ,Business_Officer_Code
+   ,Service_Officer_Code
+   ,Credit_Debit_Indicator
+   ,Sector_SG_Code
+   ,Product_Amt_CZK
+   ,Product_Amt_In_CZK
+   ,Product_Count
+   ,Product_Count_In
+   ,Product_Count_Out
+   ,COALESCE(Product_Avg_Balance_Credit 
+      / EXTRACT(DAY FROM Date_Valid),0) AS Product_Avg_Balance_Credit
+   ,COALESCE(Product_Avg_Balance_Debit 
+      / EXTRACT(DAY FROM Date_Valid),0) AS Product_Avg_Balance_Debit
+   ,COALESCE(Product_Avg_Balance_Other 
+      / EXTRACT(DAY FROM Date_Valid),0) AS Product_Avg_Balance_Other
+FROM
+ (SELECT                                                                          
+     dwkb_meta.V_MD_DWE_Date.DWE_Date AS Date_Valid                                                  
+     ,DPS.Product_Status                                                          
+     ,DPS.Product_Code                                                            
+     ,DPS.Segment_Code_12                                                         
+     ,DPS.Business_Officer_Code                                                   
+     ,DPS.Service_Officer_Code                                                    
+     ,DPS.Credit_Debit_Indicator                                                  
+     ,DPS.Sector_SG_Code                                                          
+     ,SUM(CASE                                                                    
+             WHEN DPS.Date_Valid = dwkb_meta.V_MD_DWE_Date.DWE_Date                                   
+                THEN DPS.Product_Amt_CZK                                              
+             ELSE CAST(0 AS DECIMAL(17,2))                                         
+          END) Product_Amt_CZK                                                     
+     ,SUM(Product_Amt_In_CZK) AS Product_Amt_In_CZK                               
+     ,SUM(CASE                                                                    
+             WHEN DPS.Date_Valid = dwkb_meta.V_MD_DWE_Date.DWE_Date                                   
+                THEN DPS.Product_Count                                                
+             ELSE 0                                                                
+          END) Product_Count                                                       
+     ,SUM(Product_Count_In) AS Product_Count_In                                   
+     ,SUM(Product_Count_Out) AS Product_Count_Out
+     ,SUM(CASE 
+             WHEN Credit_Debit_Indicator = 'C' 
+                THEN Product_Amt_CZK * HDKD.Date_Weight
+          END) Product_Avg_Balance_Credit
+     ,SUM(CASE 
+             WHEN Credit_Debit_Indicator = 'D' 
+                THEN Product_Amt_CZK * HDKD.Date_Weight
+          END) Product_Avg_Balance_Debit
+     ,SUM(CASE 
+             WHEN Credit_Debit_Indicator <> 'C' 
+                   AND Credit_Debit_Indicator <> 'D'
+                THEN Product_Amt_CZK * HDKD.Date_Weight
+          END) Product_Avg_Balance_Other                                
+  FROM DD_Prod_Sum DPS                                                      
+  LEFT OUTER JOIN 
+   (SELECT 
+       Date_Valid
+       ,Date_Weight
+    FROM dwkb_meta.H_DW_KB_Dates
+    WHERE Source_Code='DI' 
+       AND Area_Available='Y'
+       AND Database_Name = 'dwkb') HDKD
+  ON HDKD.Date_Valid = DPS.Date_Valid  
+  WHERE EXTRACT(YEAR FROM DPS.Date_Valid)                                            
+         =  EXTRACT(YEAR FROM 1051231)                                    
+          AND EXTRACT(MONTH FROM DPS.Date_Valid)                                         
+           =  EXTRACT(MONTH FROM 1051231)                                
+  GROUP BY 1,2,3,4,5,6,7,8) TMP;                                    
+ 
+ COLLECT STATISTICS ON DM_Prod_Sum; 
+ 
+ --
+ 
+ INSERT INTO DM_Prod_Sum (                                                   
+   Date_Valid
+   ,Product_Status                                                               
+   ,Product_Code                                                                
+   ,Segment_Code_12                                                             
+   ,Business_Officer_Code                                                       
+   ,Service_Officer_Code                                                        
+   ,Credit_Debit_Indicator                                                      
+   ,Sector_SG_Code                                                              
+   ,Product_Amt_CZK                                                             
+   ,Product_Amt_In_CZK                                                          
+   ,Product_Count                                                               
+   ,Product_Count_In                                                            
+   ,Product_Count_Out
+   ,Product_Avg_Balance_Credit
+   ,Product_Avg_Balance_Debit
+   ,Product_Avg_Balance_Other)                                                         
+SELECT
+   Date_Valid
+   ,Product_Status
+   ,Product_Code
+   ,Segment_Code_12
+   ,Business_Officer_Code
+   ,Service_Officer_Code
+   ,Credit_Debit_Indicator
+   ,Sector_SG_Code
+   ,Product_Amt_CZK
+   ,Product_Amt_In_CZK
+   ,Product_Count
+   ,Product_Count_In
+   ,Product_Count_Out
+   ,COALESCE(Product_Avg_Balance_Credit 
+      / EXTRACT(DAY FROM Date_Valid),0) AS Product_Avg_Balance_Credit
+   ,COALESCE(Product_Avg_Balance_Debit 
+      / EXTRACT(DAY FROM Date_Valid),0) AS Product_Avg_Balance_Debit
+   ,COALESCE(Product_Avg_Balance_Other 
+      / EXTRACT(DAY FROM Date_Valid),0) AS Product_Avg_Balance_Other
+FROM
+ (SELECT                                                                          
+     dwkb_meta.V_MD_DWE_Date.DWE_Date AS Date_Valid                                                  
+     ,DPS.Product_Status                                                          
+     ,DPS.Product_Code                                                            
+     ,DPS.Segment_Code_12                                                         
+     ,DPS.Business_Officer_Code                                                   
+     ,DPS.Service_Officer_Code                                                    
+     ,DPS.Credit_Debit_Indicator                                                  
+     ,DPS.Sector_SG_Code                                                          
+     ,SUM(CASE                                                                    
+             WHEN DPS.Date_Valid = dwkb_meta.V_MD_DWE_Date.DWE_Date                                   
+                THEN DPS.Product_Amt_CZK                                              
+             ELSE CAST(0 AS DECIMAL(17,2))                                         
+          END) Product_Amt_CZK                                                     
+     ,SUM(Product_Amt_In_CZK) AS Product_Amt_In_CZK                               
+     ,SUM(CASE                                                                    
+             WHEN DPS.Date_Valid = dwkb_meta.V_MD_DWE_Date.DWE_Date                                   
+                THEN DPS.Product_Count                                                
+             ELSE 0                                                                
+          END) Product_Count                                                       
+     ,SUM(Product_Count_In) AS Product_Count_In                                   
+     ,SUM(Product_Count_Out) AS Product_Count_Out
+     ,SUM(CASE 
+             WHEN Credit_Debit_Indicator = 'C' 
+                THEN Product_Amt_CZK * HDKD.Date_Weight
+          END) Product_Avg_Balance_Credit
+     ,SUM(CASE 
+             WHEN Credit_Debit_Indicator = 'D' 
+                THEN Product_Amt_CZK * HDKD.Date_Weight
+          END) Product_Avg_Balance_Debit
+     ,SUM(CASE 
+             WHEN Credit_Debit_Indicator <> 'C' 
+                   AND Credit_Debit_Indicator <> 'D'
+                THEN Product_Amt_CZK * HDKD.Date_Weight
+          END) Product_Avg_Balance_Other                                
+  FROM DD_Prod_Sum DPS                                                      
+  LEFT OUTER JOIN 
+   (SELECT 
+       Date_Valid
+       ,Date_Weight
+    FROM dwkb_meta.H_DW_KB_Dates
+    WHERE Source_Code='DI' 
+       AND Area_Available='Y'
+       AND Database_Name = 'dwkb') HDKD
+  ON HDKD.Date_Valid = DPS.Date_Valid  
+  WHERE EXTRACT(YEAR FROM DPS.Date_Valid)                                            
+         =  EXTRACT(YEAR FROM 1051130)                                    
+          AND EXTRACT(MONTH FROM DPS.Date_Valid)                                         
+           =  EXTRACT(MONTH FROM 1051130)                                
+  GROUP BY 1,2,3,4,5,6,7,8) TMP;                                    
+ 
+ COLLECT STATISTICS ON DM_Prod_Sum;                                                                              
+                                                                             
+/********************************************************************/                                                                                          
+/********************** MD_SCRIPT_TIMES.SCRIPT_END ******************/           
+exec dwkb_meta.MD_Script_Times_Upd(Script_Code = 'TMMPRSUM');                  
+                                                                                
+.IF ERRORCODE > 0 THEN .QUIT 8;                                                 

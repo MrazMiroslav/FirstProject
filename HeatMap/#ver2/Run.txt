@@ -1,0 +1,19 @@
+                   
+.SET ERRORLEVEL UNKNOWN SEVERITY 16;
+
+.SET ERROROUT STDOUT;
+
+.LOGON dwkb.kb.cz/e_mmraz;
+--.LOGON dwkbtest.kb.cz/e_mmraz;
+
+DATABASE d_dwkb;
+
+.SET MAXERROR 1     
+
+.RUN FILE="init_TSHTMPW.txt"  
+
+.IF ERRORCODE > 0 THEN .QUIT ERRORCODE;                                     
+                                                                    
+.LOGOFF;
+
+.QUIT ERRORCODE;

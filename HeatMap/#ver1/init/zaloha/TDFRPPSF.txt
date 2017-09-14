@@ -1,0 +1,1389 @@
+/********1*********2*********3*********4*********5*********6*********/
+-- Code: TDFRPPSF
+-- Name: TDFRPPSF.txt
+-- Utility: BTEQ
+-- Mutation: m_performrep_ts
+-- Type: Transformace
+-- Description: Skript T-faze plni tabulku
+--              DFR_Plan_Prod_Sum_FF v datamartu m_performrep_ts
+-- Run when: Plneni martu m_performrep_ts.
+--           Spouteni v procese denni transformace.
+-- User: trf_marts
+-- Repeatable: Pokud nebyl dokoncen, lze opakovat.
+-- Documentation: m_performrep_ts.pdm
+-- Date used: 2006-01-30
+/********************************************************************/
+-- V_MD_DWE_Date: ano
+/********************************************************************/
+--  MMR * 2005-12-20 FIRST WRITTEN
+-- Changes:
+/********************************************************************/
+
+.RUN FILE='i:\IFSec\InformaticaServer\CtlFiles\logon_trf_marts.txt'
+
+.SET MAXERROR 1
+
+--.quit 0
+
+DATABASE m_performrep_ts;
+
+select 
+  DWE_Date
+from dwkb_meta.V_MD_DWE_Date DWE
+inner join 
+(
+    select
+      calendar_date
+      ,year_of_calendar
+      ,case
+          when day_of_week = 1
+          then week_of_year - 1
+          else week_of_year
+       end calendar_week
+    from sys_calendar.calendar
+) CAL
+on CAL.calendar_date = DWE.DWE_Date
+inner join 
+(
+    select
+      calendar_date
+      ,year_of_calendar
+      ,case
+          when day_of_week = 1
+          then week_of_year - 1
+          else week_of_year
+       end calendar_week
+    from sys_calendar.calendar
+) CAL2
+on CAL2.calendar_date = DWE.DWE_Date + DWE.Date_Weight
+where CAL.year_of_calendar = CAL2.year_of_calendar
+      and CAL.calendar_week <> CAL2.calendar_week
+;
+.IF ACTIVITYCOUNT = 0 THEN EXIT 0;
+
+.SET ERRORLEVEL UNKNOWN SEVERITY 16;
+.SET ERROROUT STDOUT;
+.SET ERRORLEVEL 3807 SEVERITY 0;
+
+/* probably drop of tmp tables */
+drop table tmp_DFr_Prod_Sum_R;
+drop table tmp_DFr_Prod_Sum;
+drop table tmp_DFr_Prod_Sum_1;
+drop table tmp_DFr_Prod_Sum_MAIN;
+drop table tmp_DFR_Plan_Prod_Sum_FF;
+drop table tmp_DFr_Plan_Prod_Sum;
+
+
+.SET ERRORLEVEL 3807 SEVERITY 8;
+
+/*************** MD_SCRIPT_TIMES.SCRIPT_START ***********************/
+
+EXEC dwkb_meta.MD_Script_Times_Ins(Script_Code = 'TDFRPPSF');
+
+
+/****START***** create tmp tables *****/
+
+--Tabulka obsahuje datum posledniho dne minuleho roku
+CREATE VOLATILE TABLE Tmp_Working_Days
+(
+   Work_Date DATE FORMAT 'YYYY-MM-DD'
+)
+ON COMMIT PRESERVE ROWS;
+
+--tabulka je odvozena od zakladni tabulky a obsahuje zdrojove data pro report, pro aktualni jednotku
+CREATE SET TABLE tmp_DFr_Prod_Sum_R
+     (
+      Date_Valid              DATE FORMAT 'YYYY-MM-DD' NOT NULL,        
+      Product_Group_Code      VARCHAR(10) NOT NULL,                     
+      Product_Level           BYTEINT NOT NULL,                                                  
+      Service_Segment         CHAR(3)  NOT NULL,                        
+      Org_Unit_Type           CHAR(3) NOT NULL,                         
+      Org_Unit_Code           CHAR(5) NOT NULL,                         
+      Org_Unit_Code_Suppl     CHAR(3) NOT NULL,                         
+      Org_Unit_Level          CHAR(1) NOT NULL,
+      Business_Officer_Code   CHAR(9) NOT NULL,                         
+      P_Org_Unit_Type         CHAR(3) NOT NULL,                         
+      P_Org_Unit_Code         CHAR(5) NOT NULL,                         
+      P_Org_Unit_Code_Suppl   CHAR(3) NOT NULL,                         
+      P_Org_Unit_Level        CHAR(1) NOT NULL,                         
+      Product_Avg_Balance_Credit     DECIMAL(17,2),
+      Product_Avg_Balance_Debit      DECIMAL(17,2),
+      Product_Avg_Balance_Other      DECIMAL(17,2),
+      Product_Amt_CZK         DECIMAL(17,2),
+      Product_Amt_In_CZK      DECIMAL(17,2),                                    
+      Product_Count           INTEGER,                                   
+      Product_Count_In        INTEGER                                   
+      )                                                                 
+UNIQUE PRIMARY INDEX tmp_DM_Prod_Sum_UPI ( Date_Valid , Product_Group_Code ,
+Service_Segment ,Org_Unit_Type, Org_Unit_Code, Org_Unit_Code_Suppl, Org_Unit_Level, Business_Officer_Code )
+;
+
+collect statistics tmp_DFr_Prod_Sum_R index tmp_DM_Prod_Sum_UPI;
+
+
+--tabulka je odvozena od zakladni tabulky a obsahuje zdrojove data pro report, pro aktualni jednotku
+CREATE MULTISET TABLE tmp_DFr_Prod_Sum
+     (
+      Date_Valid              DATE FORMAT 'YYYY-MM-DD' NOT NULL,        
+      Product_Group_Code      VARCHAR(10) NOT NULL,                     
+      Product_Level           BYTEINT NOT NULL,                        
+      Service_Segment         CHAR(3)  NOT NULL,                        
+      Org_Unit_Type           CHAR(3) NOT NULL,                         
+      Org_Unit_Code           CHAR(5) NOT NULL,                         
+      Org_Unit_Code_Suppl     CHAR(3) NOT NULL,                         
+      Org_Unit_Level          CHAR(1) NOT NULL,
+      Business_Officer_Code   CHAR(9) NOT NULL,                         
+      P_Org_Unit_Type         CHAR(3) NOT NULL,                         
+      P_Org_Unit_Code         CHAR(5) NOT NULL,                         
+      P_Org_Unit_Code_Suppl   CHAR(3) NOT NULL,                         
+      P_Org_Unit_Level        CHAR(1) NOT NULL,                         
+      Product_Avg_Balance_Credit     DECIMAL(17,2),
+      Product_Avg_Balance_Debit      DECIMAL(17,2),
+      Product_Avg_Balance_Other      DECIMAL(17,2),
+      Product_Amt_CZK         DECIMAL(17,2),
+      Product_Amt_In_CZK      DECIMAL(17,2),                                    
+      Product_Count           INTEGER,
+      Product_Count_In        INTEGER                                   
+      )                                                                 
+PRIMARY INDEX tmp_DFr_Prod_Sum_NUPI ( Date_Valid , Product_Group_Code ,
+Service_Segment ,Org_Unit_Type, Org_Unit_Code, Org_Unit_Code_Suppl, Org_Unit_Level, Business_Officer_Code )
+;
+
+collect statistics tmp_DFr_Prod_Sum index tmp_DFr_Prod_Sum_NUPI;
+
+
+create MULTISET table tmp_DFr_Prod_Sum_1 
+(
+    Date_Valid                     DATE                 not null
+    ,Product_Status                 CHAR(1)              not null
+    ,Product_Code                   VARCHAR(30)          not null
+    ,Segment_Code_12                CHAR(2)              not null
+    ,Business_Officer_Code          CHAR(9)              not null
+    ,Service_Officer_Code           CHAR(9)              not null
+    ,Credit_Debit_Indicator         CHAR(1)              not null
+    ,Sector_SG_Code                 CHAR(3)              not null
+    ,Product_Amt_CZK                DECIMAL(17,2)        not null
+    ,Product_Amt_In_CZK             DECIMAL(17,2)        not null
+    ,Product_Count                  INTEGER              not null
+    ,Product_Count_In               INTEGER              not null
+    ,Product_Count_Out              INTEGER              not null
+    ,Product_Avg_Balance_Credit     DECIMAL(17,2)        not null
+    ,Product_Avg_Balance_Debit      DECIMAL(17,2)        not null
+    ,Product_Avg_Balance_Other      DECIMAL(17,2)        not null
+)
+primary index tmp_DFr_Prod_Sum_1_NUPI ( Date_Valid,
+ Product_Status,
+ Product_Code,
+ Segment_Code_12,
+ Business_Officer_Code,
+ Service_Officer_Code,
+ Credit_Debit_Indicator,
+ Sector_SG_Code );
+
+collect statistics on tmp_DFr_Prod_Sum_1 index tmp_DFr_Prod_Sum_1_NUPI;
+
+collect statistics tmp_DFr_Prod_Sum_1 column(Date_Valid,Product_Code,Segment_Code_12,Business_Officer_Code);
+
+
+--tabulka obsahuje zagregovane data jen na potrebni metriky
+create SET table tmp_DFr_Prod_Sum_MAIN 
+(
+    Date_Valid                     DATE                 not null
+    ,Product_Code                   VARCHAR(30)          not null
+    ,Segment_Code_12                CHAR(2)              not null
+    ,Business_Officer_Code          CHAR(9)              not null
+    ,Product_Amt_CZK                DECIMAL(17,2)        not null
+    ,Product_Amt_In_CZK             DECIMAL(17,2)        not null
+    ,Product_Count                  INTEGER              not null
+    ,Product_Count_In               INTEGER              not null                     
+    ,Product_Avg_Balance_Credit     DECIMAL(17,2)        not null
+    ,Product_Avg_Balance_Debit      DECIMAL(17,2)        not null
+    ,Product_Avg_Balance_Other      DECIMAL(17,2)        not null
+)
+unique primary index tmp_DFr_Prod_Sum_MAIN_UPI ( Date_Valid,
+ Product_Code,
+ Segment_Code_12,
+ Business_Officer_Code);
+
+create index tmp_DFr_Prod_Sum_MAIN_NUSI1 (Business_Officer_Code) on tmp_DFr_Prod_Sum_MAIN;
+create index tmp_DFr_Prod_Sum_MAIN_NUSI2 (Product_Code) on tmp_DFr_Prod_Sum_MAIN;
+
+collect statistics on tmp_DFr_Prod_Sum_MAIN index tmp_DFr_Prod_Sum_MAIN_UPI;
+collect statistics on tmp_DFr_Prod_Sum_MAIN index tmp_DFr_Prod_Sum_MAIN_NUSI1;
+collect statistics on tmp_DFr_Prod_Sum_MAIN index tmp_DFr_Prod_Sum_MAIN_NUSI2;
+
+
+create SET table tmp_DFR_Plan_Prod_Sum_FF 
+(
+    Date_Valid                     DATE                 not null
+    ,Node_Code                      CHAR(17)             not null
+    ,Service_Segment_Code           CHAR(3)              not null
+    ,Product_Group_Code             VARCHAR(10)          not null
+    ,WFF_Product_Count_In           DECIMAL(17,2)                 
+    ,WFF_Product_Amt_In_CZK         DECIMAL(17,2)                 
+    ,WFF_Product_Count              DECIMAL(17,2)                 
+    ,WFF_Product_Avg_Balance_Credit DECIMAL(17,2)                 
+    ,WFF_Product_Avg_Balance_Debit  DECIMAL(17,2)                 
+    ,WFF_Product_Avg_Balance_Other  DECIMAL(17,2)                 
+)
+unique primary index DFR_Plan_Prod_Sum_FF_UPI ( Product_Group_Code,
+ Date_Valid,
+ Node_Code,
+ Service_Segment_Code );
+
+collect statistics on tmp_DFR_Plan_Prod_Sum_FF index DFR_Plan_Prod_Sum_FF_UPI;
+
+
+--tabulka obsahuje tydenni plany
+create SET table tmp_DFr_Plan_Prod_Sum 
+(
+    Product_Group_Code             VARCHAR(10)          not null
+    ,Service_Segment_Code           CHAR(3)              not null
+    ,Org_Unit_Type                  CHAR(3)              not null
+    ,Org_Unit_Code                  CHAR(5)              not null
+    ,Org_Unit_Code_Suppl            CHAR(3)              not null
+    ,Org_Unit_Level                 SMALLINT
+    ,Officer_Id                     CHAR(3)                      
+    ,Product_Amt_In_CZK             DECIMAL(17,2)                
+    ,Product_Count_In               INTEGER
+    ,Product_Count                  INTEGER 
+    ,Product_Avg_Bal_Credit_Plan    DECIMAL(17,2)
+    ,Product_Avg_Bal_Debit_Plan     DECIMAL(17,2)
+    ,Product_Avg_Bal_Other_Plan     DECIMAL(17,2)                    
+)
+primary index DFr_Plan_Prod_Sum_NUPI ( Product_Group_Code,
+ Org_Unit_Type,
+ Org_Unit_Code,
+ Org_Unit_Code_Suppl,
+ Service_Segment_Code );
+
+collect statistics on tmp_DFr_Plan_Prod_Sum index DFr_Plan_Prod_Sum_NUPI;
+
+/****END***** create tmp tables *****/
+
+--INSERT GLOBAL TABLES FOR NET AND GROSS SALES
+
+
+INSERT INTO Tmp_Working_Days
+(
+  Work_Date
+)
+SELECT calendar_Date from SYS_CALENDAR.CALENDAR
+    WHERE (year_of_calendar, week_of_year) IN
+      (SELECT 
+    		A.Year_Of_Calendar, A.Week_Of_Year 
+    			FROM SYS_CALENDAR.CALENDAR A
+    			CROSS JOIN (SELECT dwkb_meta.V_MD_DWE_Date.DWE_Date) B 
+    			WHERE A.Calendar_Date = B.DWE_Date)			
+    AND Calendar_Date NOT IN
+    (select Non_Working_Day_Date from c_non_working_days)
+;
+
+
+----------------------------------------------------------------------------------------------
+insert into gt_V_C_Product_MKTG2
+(
+    Product_Code            
+    ,Product_Group_Code_1   
+    ,Product_Group_Code_2   
+    ,Product_Group_Code_3   
+    ,Product_Group_Code_4   
+    ,Product_Group_Name_1   
+    ,Product_Group_Name_EN_1
+    ,Product_Group_Name_2   
+    ,Product_Group_Name_EN_2
+    ,Product_Group_Name_3   
+    ,Product_Group_Name_EN_3
+    ,Product_Group_Name_4   
+    ,Product_Group_Name_EN_4
+    ,Product_Name           
+    ,Product_Name_EN        
+    ,Product_Group_Sort_1   
+    ,Product_Group_Sort_2   
+    ,Product_Group_Sort_3   
+    ,Product_Group_Sort_4   
+    ,Product_In_Use_Flag    
+)
+select
+    Product_Code            
+    ,Product_Group_Code_1   
+    ,Product_Group_Code_2   
+    ,Product_Group_Code_3   
+    ,Product_Group_Code_4   
+    ,Product_Group_Name_1   
+    ,Product_Group_Name_EN_1
+    ,Product_Group_Name_2   
+    ,Product_Group_Name_EN_2
+    ,Product_Group_Name_3   
+    ,Product_Group_Name_EN_3
+    ,Product_Group_Name_4   
+    ,Product_Group_Name_EN_4
+    ,Product_Name           
+    ,Product_Name_EN        
+    ,Product_Group_Sort_1   
+    ,Product_Group_Sort_2   
+    ,Product_Group_Sort_3   
+    ,Product_Group_Sort_4   
+    ,Product_In_Use_Flag     
+from V_C_Product_MKTG2;
+
+collect statistics on temporary gt_V_C_Product_MKTG2;
+
+
+insert into tmp_DFr_Prod_Sum_1
+(
+        Date_Valid                 
+        ,Product_Status            
+        ,Product_Code              
+        ,Segment_Code_12 
+        ,Business_Officer_Code     
+        ,Service_Officer_Code                
+        ,Credit_Debit_Indicator    
+        ,Sector_SG_Code            
+        ,Product_Amt_CZK           
+        ,Product_Amt_In_CZK        
+        ,Product_Count             
+        ,Product_Count_In          
+        ,Product_Count_Out         
+        ,Product_Avg_Balance_Credit
+        ,Product_Avg_Balance_Debit 
+        ,Product_Avg_Balance_Other         
+)       
+SELECT
+        Date_Valid                 
+        ,Product_Status            
+        ,Product_Code              
+        ,Segment_Code_12           
+        ,CASE
+          WHEN B.Unit_Code IS NULL
+            THEN A.Business_Officer_Code
+          ELSE B.Unit_Code || SUBSTR(A.Business_Officer_Code,7,3)
+         END     
+        ,CASE
+          WHEN C.Unit_Code IS NULL
+            THEN A.Service_Officer_Code
+          ELSE C.Unit_Code || SUBSTR(A.Service_Officer_Code,7,3)
+         END         
+        ,Credit_Debit_Indicator    
+        ,Sector_SG_Code            
+        ,Product_Amt_CZK           
+        ,Product_Amt_In_CZK        
+        ,Product_Count             
+        ,Product_Count_In          
+        ,Product_Count_Out         
+        ,Product_Avg_Balance_Credit
+        ,Product_Avg_Balance_Debit 
+        ,Product_Avg_Balance_Other         
+FROM DFr_PROD_SUM A
+LEFT OUTER JOIN dwkb.R_Unit_Renumber B
+ON SUBSTR(A.Business_Officer_Code,1,6) = B.Original_Unit_Code
+AND A.Date_Valid BETWEEN B.Start_Date AND B.End_Date
+LEFT OUTER JOIN dwkb.R_Unit_Renumber C
+ON SUBSTR(A.Service_Officer_Code,1,6) = C.Original_Unit_Code
+AND A.Date_Valid BETWEEN C.Start_Date AND C.End_Date
+WHERE Date_Valid = dwkb_meta.V_MD_DWE_Date.DWE_Date;
+
+COLLECT STATISTICS ON tmp_DFr_Prod_Sum_1;
+
+INSERT INTO tmp_DFr_Prod_Sum_MAIN
+  (
+    Date_Valid
+    ,Product_Code
+    ,Segment_Code_12
+    ,Business_Officer_Code
+    ,Product_Amt_CZK
+    ,Product_Amt_In_CZK
+    ,Product_Count
+    ,Product_Count_In
+    ,Product_Avg_Balance_Credit
+    ,Product_Avg_Balance_Debit
+    ,Product_Avg_Balance_Other
+  )
+SELECT
+    Date_Valid
+    ,Product_Code
+    ,Segment_Code_12
+    ,Business_Officer_Code
+    ,SUM(Product_Amt_CZK)
+    ,SUM(Product_Amt_In_CZK)
+    ,SUM(Product_Count)
+    ,SUM(Product_Count_In)
+    ,SUM(Product_Avg_Balance_Credit)
+    ,SUM(Product_Avg_Balance_Debit)
+    ,SUM(Product_Avg_Balance_Other)
+FROM  tmp_DFr_Prod_Sum_1
+GROUP BY 1,2,3,4
+;
+
+COLLECT STATISTICS ON tmp_DFr_Prod_Sum_MAIN;
+
+
+INSERT INTO tmp_DFr_Prod_Sum
+(
+       Date_Valid           
+      ,Product_Group_Code   
+      ,Product_Level      
+      ,Service_Segment      
+      ,Org_Unit_Type        
+      ,Org_Unit_Code        
+      ,Org_Unit_Code_Suppl  
+      ,Org_Unit_Level       
+      ,Business_Officer_Code
+      ,P_Org_Unit_Type      
+      ,P_Org_Unit_Code      
+      ,P_Org_Unit_Code_Suppl
+      ,P_Org_Unit_Level     
+      ,Product_Avg_Balance_Credit
+      ,Product_Avg_Balance_Debit
+      ,Product_Avg_Balance_Other
+      ,Product_Amt_CZK
+      ,Product_Amt_In_CZK    
+      ,Product_Count
+      ,Product_Count_In        
+)
+SELECT
+    A.Date_Valid               AS Date_Valid         
+    ,C.Product_Group_Code_2    AS Product_Group_Code
+    ,2  AS Product_Level
+    ,CASE
+        WHEN B.Management_Type = 'MC'
+          THEN 'MEM'
+        WHEN SUBSTR(A.Segment_Code_12,1,1) = 'B' AND B.Management_Type = 'XX'
+          THEN 'SB'
+        WHEN SUBSTR(A.Segment_Code_12,1,1) = 'P' AND B.Management_Type = 'XX'
+          THEN 'IND'
+      END Service_Segment
+    ,B.Org_Unit_Type_6 AS Org_Unit_Type
+    ,B.Org_Unit_Code_6 AS Org_Unit_Code      
+    ,B.Org_Unit_Code_Suppl_6 AS Org_Unit_Code_Suppl
+    ,'8' AS Org_Unit_Level
+    ,A.Business_Officer_Code AS Business_Officer_Code
+    ,(CASE WHEN B.Management_Type <> 'MC' THEN B.Org_Unit_Type_6 ELSE B.Org_Unit_Type_4 END)       AS P_Org_Unit_Type
+    ,(CASE WHEN B.Management_Type <> 'MC' THEN B.Org_Unit_Code_6 ELSE B.Org_Unit_Code_4 END)       AS P_Org_Unit_Code
+    ,(CASE 
+          WHEN B.Management_Type <> 'MC' 
+            THEN B.Org_Unit_Code_Suppl_6 
+            ELSE B.Org_Unit_Code_Suppl_4 
+        END) AS P_Org_Unit_Code_Suppl
+    ,(CASE WHEN B.Management_Type <> 'MC' THEN '6' ELSE '4' END) P_Org_Unit_Level           
+    ,A.Product_Avg_Balance_Credit
+    ,A.Product_Avg_Balance_Debit
+    ,A.Product_Avg_Balance_Other
+    ,A.Product_Amt_CZK AS Product_Amt_CZK
+    ,A.Product_Amt_In_CZK AS Product_Amt_In_CZK 
+    ,A.Product_Count AS Product_Count
+    ,A.Product_Count_In AS Product_Count_In          
+    FROM tmp_DFr_Prod_Sum_MAIN A
+    INNER JOIN V_D_Org_Business B
+    ON A.Business_Officer_Code = B.Officer_Code
+    AND B.Management_Type IN ('MC','XX')
+    INNER JOIN gt_V_C_Product_MKTG2  C
+    ON C.Product_Code  = A.Product_Code
+    WHERE A.Segment_Code_12 <> 'XX'    
+;
+
+COLLECT STATISTICS tmp_DFr_Prod_Sum;
+
+
+INSERT INTO tmp_DFr_Prod_Sum
+(
+       Date_Valid           
+      ,Product_Group_Code   
+      ,Product_Level       
+      ,Service_Segment      
+      ,Org_Unit_Type        
+      ,Org_Unit_Code        
+      ,Org_Unit_Code_Suppl  
+      ,Org_Unit_Level       
+      ,Business_Officer_Code
+      ,P_Org_Unit_Type      
+      ,P_Org_Unit_Code      
+      ,P_Org_Unit_Code_Suppl
+      ,P_Org_Unit_Level
+      ,Product_Avg_Balance_Credit
+      ,Product_Avg_Balance_Debit 
+      ,Product_Avg_Balance_Other           
+      ,Product_Amt_CZK
+      ,Product_Amt_In_CZK    
+      ,Product_Count
+      ,Product_Count_In        
+)
+SELECT
+A.Date_Valid               AS Date_Valid         
+,C.Product_Group_Code_3    AS Product_Group_Code
+,3  AS Product_Level
+,CASE
+    WHEN B.Management_Type = 'MC'
+      THEN 'MEM'
+    WHEN SUBSTR(A.Segment_Code_12,1,1) = 'B' AND B.Management_Type = 'XX'
+      THEN 'SB'
+    WHEN SUBSTR(A.Segment_Code_12,1,1) = 'P' AND B.Management_Type = 'XX'
+      THEN 'IND'
+  END Service_Segment
+,B.Org_Unit_Type_6 AS Org_Unit_Type
+,B.Org_Unit_Code_6 AS Org_Unit_Code      
+,B.Org_Unit_Code_Suppl_6 AS Org_Unit_Code_Suppl
+,'8' AS Org_Unit_Level
+,A.Business_Officer_Code AS Business_Officer_Code
+,(CASE WHEN B.Management_Type <> 'MC' THEN B.Org_Unit_Type_6 ELSE B.Org_Unit_Type_4 END)       AS P_Org_Unit_Type
+,(CASE WHEN B.Management_Type <> 'MC' THEN B.Org_Unit_Code_6 ELSE B.Org_Unit_Code_4 END)       AS P_Org_Unit_Code
+,(CASE 
+      WHEN B.Management_Type <> 'MC' 
+        THEN B.Org_Unit_Code_Suppl_6 
+        ELSE B.Org_Unit_Code_Suppl_4 
+    END) AS P_Org_Unit_Code_Suppl
+,(CASE WHEN B.Management_Type <> 'MC' THEN '6' ELSE '4' END) P_Org_Unit_Level
+,A.Product_Avg_Balance_Credit
+,A.Product_Avg_Balance_Debit
+,A.Product_Avg_Balance_Other
+,A.Product_Amt_CZK AS Product_Amt_CZK
+,A.Product_Amt_In_CZK AS Product_Amt_In_CZK 
+,A.Product_Count AS Product_Count
+,A.Product_Count_In AS Product_Count_In     
+FROM tmp_DFr_Prod_Sum_MAIN A
+INNER JOIN V_D_Org_Business B
+ON A.Business_Officer_Code = B.Officer_Code
+AND B.Management_Type IN ('MC','XX')
+INNER JOIN gt_V_C_Product_MKTG2  C
+ON C.Product_Code  = A.Product_Code
+WHERE A.Segment_Code_12 <> 'XX'    
+;
+
+COLLECT STATISTICS tmp_DFr_Prod_Sum;
+
+
+--Agregation
+INSERT INTO tmp_DFr_Prod_Sum_R
+(
+    Date_Valid           
+    ,Product_Group_Code   
+    ,Product_Level       
+    ,Service_Segment      
+    ,Org_Unit_Type        
+    ,Org_Unit_Code        
+    ,Org_Unit_Code_Suppl  
+    ,Org_Unit_Level       
+    ,Business_Officer_Code
+    ,P_Org_Unit_Type      
+    ,P_Org_Unit_Code      
+    ,P_Org_Unit_Code_Suppl
+    ,P_Org_Unit_Level     
+    ,Product_Avg_Balance_Credit
+    ,Product_Avg_Balance_Debit 
+    ,Product_Avg_Balance_Other              
+    ,Product_Amt_CZK
+    ,Product_Amt_In_CZK     
+    ,Product_Count
+    ,Product_Count_In        
+)
+SELECT
+    Date_Valid           
+    ,Product_Group_Code   
+    ,Product_Level        
+    ,Service_Segment      
+    ,Org_Unit_Type        
+    ,Org_Unit_Code        
+    ,Org_Unit_Code_Suppl  
+    ,Org_Unit_Level       
+    ,Business_Officer_Code
+    ,MAX(P_Org_Unit_Type)      
+    ,MAX(P_Org_Unit_Code)      
+    ,MAX(P_Org_Unit_Code_Suppl)
+    ,MAX(P_Org_Unit_Level)     
+    ,SUM(Product_Avg_Balance_Credit)
+    ,SUM(Product_Avg_Balance_Debit) 
+    ,SUM(Product_Avg_Balance_Other)             
+    ,SUM(Product_Amt_CZK)
+    ,SUM(Product_Amt_In_CZK)     
+    ,SUM(Product_Count)
+    ,SUM(Product_Count_In)        
+FROM tmp_DFr_Prod_Sum
+GROUP BY 1,2,3,4,5,6,7,8,9;
+
+COLLECT STATISTICS ON tmp_DFr_Prod_Sum_R;
+
+DELETE FROM tmp_DFr_Prod_Sum;
+COLLECT STATISTICS ON tmp_DFr_Prod_Sum;
+
+
+
+--BRM START
+INSERT INTO tmp_DFr_Prod_Sum
+(
+       Date_Valid           
+      ,Product_Group_Code   
+      ,Product_Level        
+      ,Service_Segment      
+      ,Org_Unit_Type        
+      ,Org_Unit_Code        
+      ,Org_Unit_Code_Suppl  
+      ,Org_Unit_Level       
+      ,Business_Officer_Code
+      ,P_Org_Unit_Type      
+      ,P_Org_Unit_Code      
+      ,P_Org_Unit_Code_Suppl
+      ,P_Org_Unit_Level
+      ,Product_Avg_Balance_Credit
+      ,Product_Avg_Balance_Debit 
+      ,Product_Avg_Balance_Other           
+      ,Product_Amt_CZK
+      ,Product_Amt_In_CZK    
+      ,Product_Count
+      ,Product_Count_In        
+)
+SELECT
+A.Date_Valid               AS Date_Valid         
+,A.Product_Group_Code      AS Product_Group_Code
+,A.Product_Level
+,A.Service_Segment
+,A.P_Org_Unit_Type         AS Org_Unit_Type
+,A.P_Org_Unit_Code         AS Org_Unit_Code      
+,A.P_Org_Unit_Code_Suppl   AS Org_Unit_Code_Suppl
+,A.P_Org_Unit_Level        AS Org_Unit_Level
+,'XXXXXXXXX'                     AS Business_Officer_Code
+,B.Parent_Unit_Type        AS P_Org_Unit_Type
+,B.Parent_Unit_Code        AS P_Org_Unit_Code
+,B.Parent_Unit_Code_Suppl  AS P_Org_Unit_Code_Suppl
+,'4'                       AS P_Org_Unit_Level
+,A.Product_Avg_Balance_Credit
+,A.Product_Avg_Balance_Debit 
+,A.Product_Avg_Balance_Other                       
+,A.Product_Amt_CZK AS Product_Amt_CZK
+,A.Product_Amt_In_CZK AS Product_Amt_In_CZK 
+,A.Product_Count AS Product_Count
+,A.Product_Count_In AS Product_Count_In     
+FROM tmp_DFr_Prod_Sum_R A
+INNER JOIN (
+SELECT
+  Org_Unit_Type_6 AS Org_Unit_Type
+  ,Org_Unit_Code_6 AS Org_Unit_Code
+  ,Org_Unit_Code_Suppl_6 AS Org_Unit_Code_Suppl
+  ,Org_Unit_Type_4 AS Parent_Unit_Type
+  ,Org_Unit_Code_4 AS Parent_Unit_Code
+  ,Org_Unit_Code_Suppl_4 AS Parent_Unit_Code_Suppl
+  FROM V_D_Org_Business_Unit
+  GROUP BY 1,2,3,4,5,6
+) B
+ON A.P_Org_Unit_Type = B.Org_Unit_Type
+AND A.P_Org_Unit_Code = B.Org_Unit_Code
+AND A.P_Org_Unit_Code_Suppl = B.Org_Unit_Code_Suppl
+WHERE A.P_Org_Unit_Level = '6'
+;
+
+COLLECT STATISTICS tmp_DFr_Prod_Sum;
+
+--Agregation
+INSERT INTO tmp_DFr_Prod_Sum_R
+(
+    Date_Valid           
+    ,Product_Group_Code   
+    ,Product_Level       
+    ,Service_Segment      
+    ,Org_Unit_Type        
+    ,Org_Unit_Code        
+    ,Org_Unit_Code_Suppl  
+    ,Org_Unit_Level       
+    ,Business_Officer_Code
+    ,P_Org_Unit_Type      
+    ,P_Org_Unit_Code      
+    ,P_Org_Unit_Code_Suppl
+    ,P_Org_Unit_Level     
+    ,Product_Avg_Balance_Credit
+    ,Product_Avg_Balance_Debit 
+    ,Product_Avg_Balance_Other           
+    ,Product_Amt_CZK
+    ,Product_Amt_In_CZK     
+    ,Product_Count
+    ,Product_Count_In        
+)
+SELECT
+    Date_Valid           
+    ,Product_Group_Code   
+    ,Product_Level        
+    ,Service_Segment      
+    ,Org_Unit_Type        
+    ,Org_Unit_Code        
+    ,Org_Unit_Code_Suppl  
+    ,Org_Unit_Level       
+    ,Business_Officer_Code
+    ,MAX(P_Org_Unit_Type)      
+    ,MAX(P_Org_Unit_Code)      
+    ,MAX(P_Org_Unit_Code_Suppl)
+    ,MAX(P_Org_Unit_Level)     
+    ,SUM(Product_Avg_Balance_Credit)
+    ,SUM(Product_Avg_Balance_Debit) 
+    ,SUM(Product_Avg_Balance_Other)             
+    ,SUM(Product_Amt_CZK)
+    ,SUM(Product_Amt_In_CZK)     
+    ,SUM(Product_Count)
+    ,SUM(Product_Count_In)        
+FROM tmp_DFr_Prod_Sum
+GROUP BY 1,2,3,4,5,6,7,8,9;
+
+COLLECT STATISTICS ON tmp_DFr_Prod_Sum_R;
+
+DELETE FROM tmp_DFr_Prod_Sum;
+COLLECT STATISTICS ON tmp_DFr_Prod_Sum;
+
+
+---BRM END
+
+
+--GBM, HOC, HOR START
+INSERT INTO tmp_DFr_Prod_Sum
+(
+       Date_Valid           
+      ,Product_Group_Code   
+      ,Product_Level           
+      ,Service_Segment      
+      ,Org_Unit_Type        
+      ,Org_Unit_Code        
+      ,Org_Unit_Code_Suppl  
+      ,Org_Unit_Level       
+      ,Business_Officer_Code
+      ,P_Org_Unit_Type      
+      ,P_Org_Unit_Code      
+      ,P_Org_Unit_Code_Suppl
+      ,P_Org_Unit_Level
+      ,Product_Avg_Balance_Credit
+      ,Product_Avg_Balance_Debit 
+      ,Product_Avg_Balance_Other           
+      ,Product_Amt_CZK 
+      ,Product_Amt_In_CZK   
+      ,Product_Count 
+      ,Product_Count_In       
+      
+)
+SELECT
+A.Date_Valid               AS Date_Valid         
+,A.Product_Group_Code      AS Product_Group_Code
+,A.Product_Level
+,A.Service_Segment
+,A.P_Org_Unit_Type         AS Org_Unit_Type
+,A.P_Org_Unit_Code         AS Org_Unit_Code      
+,A.P_Org_Unit_Code_Suppl   AS Org_Unit_Code_Suppl
+,A.P_Org_Unit_Level        AS Org_Unit_Level
+,'XXXXXXXXX'                     AS Business_Officer_Code
+,B.Parent_Unit_Type        AS P_Org_Unit_Type
+,B.Parent_Unit_Code        AS P_Org_Unit_Code
+,B.Parent_Unit_Code_Suppl  AS P_Org_Unit_Code_Suppl
+,'3'                       AS P_Org_Unit_Level
+,A.Product_Avg_Balance_Credit
+,A.Product_Avg_Balance_Debit 
+,A.Product_Avg_Balance_Other                       
+,A.Product_Amt_CZK AS Product_Amt_CZK
+,A.Product_Amt_In_CZK AS Product_Amt_In_CZK 
+,A.Product_Count AS Product_Count
+,A.Product_Count_In AS Product_Count_In     
+FROM tmp_DFr_Prod_Sum_R A
+INNER JOIN (
+SELECT
+  Org_Unit_Type_4 AS Org_Unit_Type
+  ,Org_Unit_Code_4 AS Org_Unit_Code
+  ,Org_Unit_Code_Suppl_4 AS Org_Unit_Code_Suppl
+  ,Org_Unit_Type_3 AS Parent_Unit_Type
+  ,Org_Unit_Code_3 AS Parent_Unit_Code
+  ,Org_Unit_Code_Suppl_3 AS Parent_Unit_Code_Suppl
+  FROM V_D_Org_Business_Unit
+  GROUP BY 1,2,3,4,5,6
+) B
+ON A.P_Org_Unit_Type = B.Org_Unit_Type
+AND A.P_Org_Unit_Code = B.Org_Unit_Code
+AND A.P_Org_Unit_Code_Suppl = B.Org_Unit_Code_Suppl
+WHERE A.P_Org_Unit_Level = '4'
+;
+
+COLLECT STATISTICS tmp_DFr_Prod_Sum;
+
+
+--Agregation
+INSERT INTO tmp_DFr_Prod_Sum_R
+(
+    Date_Valid           
+    ,Product_Group_Code   
+    ,Product_Level       
+    ,Service_Segment      
+    ,Org_Unit_Type        
+    ,Org_Unit_Code        
+    ,Org_Unit_Code_Suppl  
+    ,Org_Unit_Level       
+    ,Business_Officer_Code
+    ,P_Org_Unit_Type      
+    ,P_Org_Unit_Code      
+    ,P_Org_Unit_Code_Suppl
+    ,P_Org_Unit_Level     
+    ,Product_Avg_Balance_Credit
+    ,Product_Avg_Balance_Debit 
+    ,Product_Avg_Balance_Other           
+    ,Product_Amt_CZK
+    ,Product_Amt_In_CZK     
+    ,Product_Count
+    ,Product_Count_In        
+)
+SELECT
+    Date_Valid           
+    ,Product_Group_Code   
+    ,Product_Level        
+    ,Service_Segment      
+    ,Org_Unit_Type        
+    ,Org_Unit_Code        
+    ,Org_Unit_Code_Suppl  
+    ,Org_Unit_Level       
+    ,Business_Officer_Code
+    ,MAX(P_Org_Unit_Type)      
+    ,MAX(P_Org_Unit_Code)      
+    ,MAX(P_Org_Unit_Code_Suppl)
+    ,MAX(P_Org_Unit_Level)     
+    ,SUM(Product_Avg_Balance_Credit)
+    ,SUM(Product_Avg_Balance_Debit) 
+    ,SUM(Product_Avg_Balance_Other)             
+    ,SUM(Product_Amt_CZK)
+    ,SUM(Product_Amt_In_CZK)     
+    ,SUM(Product_Count)
+    ,SUM(Product_Count_In)        
+FROM tmp_DFr_Prod_Sum
+GROUP BY 1,2,3,4,5,6,7,8,9;
+
+COLLECT STATISTICS ON tmp_DFr_Prod_Sum_R;
+
+DELETE FROM tmp_DFr_Prod_Sum;
+COLLECT STATISTICS ON tmp_DFr_Prod_Sum;
+
+
+---GBM, HOC, HOR END
+
+--RGM START
+INSERT INTO tmp_DFr_Prod_Sum
+(
+       Date_Valid           
+      ,Product_Group_Code   
+      ,Product_Level              
+      ,Service_Segment      
+      ,Org_Unit_Type        
+      ,Org_Unit_Code        
+      ,Org_Unit_Code_Suppl  
+      ,Org_Unit_Level       
+      ,Business_Officer_Code
+      ,P_Org_Unit_Type      
+      ,P_Org_Unit_Code      
+      ,P_Org_Unit_Code_Suppl
+      ,P_Org_Unit_Level
+      ,Product_Avg_Balance_Credit
+      ,Product_Avg_Balance_Debit 
+      ,Product_Avg_Balance_Other           
+      ,Product_Amt_CZK
+      ,Product_Amt_In_CZK    
+      ,Product_Count
+      ,Product_Count_In        
+      
+)
+SELECT
+A.Date_Valid               AS Date_Valid         
+,A.Product_Group_Code      AS Product_Group_Code
+,A.Product_Level
+,A.Service_Segment
+,A.P_Org_Unit_Type         AS Org_Unit_Type
+,A.P_Org_Unit_Code         AS Org_Unit_Code      
+,A.P_Org_Unit_Code_Suppl   AS Org_Unit_Code_Suppl
+,A.P_Org_Unit_Level        AS Org_Unit_Level
+,'XXXXXXXXX'                     AS Business_Officer_Code
+,B.Parent_Unit_Type        AS P_Org_Unit_Type
+,B.Parent_Unit_Code        AS P_Org_Unit_Code
+,B.Parent_Unit_Code_Suppl  AS P_Org_Unit_Code_Suppl
+,'2'                       AS P_Org_Unit_Level
+,A.Product_Avg_Balance_Credit
+,A.Product_Avg_Balance_Debit 
+,A.Product_Avg_Balance_Other                       
+,A.Product_Amt_CZK AS Product_Amt_CZK
+,A.Product_Amt_In_CZK AS Product_Amt_In_CZK 
+,A.Product_Count AS Product_Count
+,A.Product_Count_In AS Product_Count_In     
+FROM tmp_DFr_Prod_Sum_R A
+INNER JOIN (
+SELECT
+  Org_Unit_Type_3 AS Org_Unit_Type
+  ,Org_Unit_Code_3 AS Org_Unit_Code
+  ,Org_Unit_Code_Suppl_3 AS Org_Unit_Code_Suppl
+  ,Org_Unit_Type_2 AS Parent_Unit_Type
+  ,Org_Unit_Code_2 AS Parent_Unit_Code
+  ,Org_Unit_Code_Suppl_2 AS Parent_Unit_Code_Suppl
+  FROM V_D_Org_Business_Unit
+  GROUP BY 1,2,3,4,5,6
+) B
+ON A.P_Org_Unit_Type = B.Org_Unit_Type
+AND A.P_Org_Unit_Code = B.Org_Unit_Code
+AND A.P_Org_Unit_Code_Suppl = B.Org_Unit_Code_Suppl
+WHERE A.P_Org_Unit_Level = '3'
+;
+
+COLLECT STATISTICS tmp_DFr_Prod_Sum;
+
+
+--Agregation
+INSERT INTO tmp_DFr_Prod_Sum_R
+(
+    Date_Valid           
+    ,Product_Group_Code   
+    ,Product_Level       
+    ,Service_Segment      
+    ,Org_Unit_Type        
+    ,Org_Unit_Code        
+    ,Org_Unit_Code_Suppl  
+    ,Org_Unit_Level       
+    ,Business_Officer_Code
+    ,P_Org_Unit_Type      
+    ,P_Org_Unit_Code      
+    ,P_Org_Unit_Code_Suppl
+    ,P_Org_Unit_Level     
+    ,Product_Avg_Balance_Credit
+    ,Product_Avg_Balance_Debit 
+    ,Product_Avg_Balance_Other           
+    ,Product_Amt_CZK
+    ,Product_Amt_In_CZK     
+    ,Product_Count
+    ,Product_Count_In        
+)
+SELECT
+    Date_Valid           
+    ,Product_Group_Code   
+    ,Product_Level        
+    ,Service_Segment      
+    ,Org_Unit_Type        
+    ,Org_Unit_Code        
+    ,Org_Unit_Code_Suppl  
+    ,Org_Unit_Level       
+    ,Business_Officer_Code
+    ,MAX(P_Org_Unit_Type)      
+    ,MAX(P_Org_Unit_Code)      
+    ,MAX(P_Org_Unit_Code_Suppl)
+    ,MAX(P_Org_Unit_Level)     
+    ,SUM(Product_Avg_Balance_Credit)
+    ,SUM(Product_Avg_Balance_Debit) 
+    ,SUM(Product_Avg_Balance_Other)             
+    ,SUM(Product_Amt_CZK)
+    ,SUM(Product_Amt_In_CZK)     
+    ,SUM(Product_Count)
+    ,SUM(Product_Count_In)        
+FROM tmp_DFr_Prod_Sum
+GROUP BY 1,2,3,4,5,6,7,8,9;
+
+COLLECT STATISTICS ON tmp_DFr_Prod_Sum_R;
+
+DELETE FROM tmp_DFr_Prod_Sum;
+COLLECT STATISTICS ON tmp_DFr_Prod_Sum;
+
+
+---RGM END
+
+--DSM START
+INSERT INTO tmp_DFr_Prod_Sum
+(
+       Date_Valid           
+      ,Product_Group_Code   
+      ,Product_Level             
+      ,Service_Segment      
+      ,Org_Unit_Type        
+      ,Org_Unit_Code        
+      ,Org_Unit_Code_Suppl  
+      ,Org_Unit_Level       
+      ,Business_Officer_Code
+      ,P_Org_Unit_Type      
+      ,P_Org_Unit_Code      
+      ,P_Org_Unit_Code_Suppl
+      ,P_Org_Unit_Level
+      ,Product_Avg_Balance_Credit
+      ,Product_Avg_Balance_Debit 
+      ,Product_Avg_Balance_Other           
+      ,Product_Amt_CZK
+      ,Product_Amt_In_CZK    
+      ,Product_Count
+      ,Product_Count_In        
+      
+)
+SELECT
+A.Date_Valid               AS Date_Valid         
+,A.Product_Group_Code      AS Product_Group_Code
+,A.Product_Level
+,A.Service_Segment
+,A.P_Org_Unit_Type         AS Org_Unit_Type
+,A.P_Org_Unit_Code         AS Org_Unit_Code      
+,A.P_Org_Unit_Code_Suppl   AS Org_Unit_Code_Suppl
+,A.P_Org_Unit_Level        AS Org_Unit_Level
+,'XXXXXXXXX'                     AS Business_Officer_Code
+,B.Parent_Unit_Type        AS P_Org_Unit_Type
+,B.Parent_Unit_Code        AS P_Org_Unit_Code
+,B.Parent_Unit_Code_Suppl  AS P_Org_Unit_Code_Suppl
+,'1'                       AS P_Org_Unit_Level
+,A.Product_Avg_Balance_Credit
+,A.Product_Avg_Balance_Debit 
+,A.Product_Avg_Balance_Other                       
+,A.Product_Amt_CZK AS Product_Amt_CZK
+,A.Product_Amt_In_CZK AS Product_Amt_In_CZK 
+,A.Product_Count AS Product_Count
+,A.Product_Count_In AS Product_Count_In     
+FROM tmp_DFr_Prod_Sum_R A
+INNER JOIN (
+SELECT
+  Org_Unit_Type_2 AS Org_Unit_Type
+  ,Org_Unit_Code_2 AS Org_Unit_Code
+  ,Org_Unit_Code_Suppl_2 AS Org_Unit_Code_Suppl
+  ,Org_Unit_Type_1 AS Parent_Unit_Type
+  ,Org_Unit_Code_1 AS Parent_Unit_Code
+  ,Org_Unit_Code_Suppl_1 AS Parent_Unit_Code_Suppl
+  FROM V_D_Org_Business_Unit
+  GROUP BY 1,2,3,4,5,6
+) B
+ON A.P_Org_Unit_Type = B.Org_Unit_Type
+AND A.P_Org_Unit_Code = B.Org_Unit_Code
+AND A.P_Org_Unit_Code_Suppl = B.Org_Unit_Code_Suppl
+WHERE A.P_Org_Unit_Level = '2'
+;
+
+COLLECT STATISTICS tmp_DFr_Prod_Sum;
+
+
+--Agregation
+INSERT INTO tmp_DFr_Prod_Sum_R
+(
+    Date_Valid           
+    ,Product_Group_Code   
+    ,Product_Level       
+    ,Service_Segment      
+    ,Org_Unit_Type        
+    ,Org_Unit_Code        
+    ,Org_Unit_Code_Suppl  
+    ,Org_Unit_Level       
+    ,Business_Officer_Code
+    ,P_Org_Unit_Type      
+    ,P_Org_Unit_Code      
+    ,P_Org_Unit_Code_Suppl
+    ,P_Org_Unit_Level     
+    ,Product_Avg_Balance_Credit
+    ,Product_Avg_Balance_Debit 
+    ,Product_Avg_Balance_Other           
+    ,Product_Amt_CZK
+    ,Product_Amt_In_CZK   
+    ,Product_Count
+    ,Product_Count_In        
+)
+SELECT
+    Date_Valid           
+    ,Product_Group_Code   
+    ,Product_Level        
+    ,Service_Segment      
+    ,Org_Unit_Type        
+    ,Org_Unit_Code        
+    ,Org_Unit_Code_Suppl  
+    ,Org_Unit_Level       
+    ,Business_Officer_Code
+    ,MAX(P_Org_Unit_Type)      
+    ,MAX(P_Org_Unit_Code)      
+    ,MAX(P_Org_Unit_Code_Suppl)
+    ,MAX(P_Org_Unit_Level)     
+    ,SUM(Product_Avg_Balance_Credit)
+    ,SUM(Product_Avg_Balance_Debit) 
+    ,SUM(Product_Avg_Balance_Other)             
+    ,SUM(Product_Amt_CZK)
+    ,SUM(Product_Amt_In_CZK)     
+    ,SUM(Product_Count)
+    ,SUM(Product_Count_In)        
+FROM tmp_DFr_Prod_Sum
+GROUP BY 1,2,3,4,5,6,7,8,9;
+
+COLLECT STATISTICS ON tmp_DFr_Prod_Sum_R;
+
+DELETE FROM tmp_DFr_Prod_Sum;
+COLLECT STATISTICS ON tmp_DFr_Prod_Sum;
+
+
+---DSM END
+
+INSERT INTO tmp_DFr_Plan_Prod_Sum
+(
+  Product_Group_Code          
+  ,Service_Segment_Code       
+  ,Org_Unit_Type              
+  ,Org_Unit_Code              
+  ,Org_Unit_Code_Suppl        
+  ,Org_Unit_Level             
+  ,Officer_Id                 
+  ,Product_Amt_In_CZK         
+  ,Product_Count_In           
+  ,Product_Count              
+  ,Product_Avg_Bal_Credit_Plan
+  ,Product_Avg_Bal_Debit_Plan 
+  ,Product_Avg_Bal_Other_Plan 
+)
+SELECT 
+  Product_Group_Code          
+  ,Service_Segment_Code       
+  ,Org_Unit_Type              
+  ,Org_Unit_Code              
+  ,Org_Unit_Code_Suppl        
+  ,Org_Unit_Level             
+  ,Officer_Id                 
+  ,SUM(Product_Amt_In_CZK_Plan)         
+  ,SUM(Product_Count_In_Plan)           
+  ,SUM(Product_Count_Plan)              
+  ,SUM(Product_Avg_Bal_Credit_Plan)
+  ,SUM(Product_Avg_Bal_Debit_Plan) 
+  ,SUM(Product_Avg_Bal_Other_Plan) 
+FROM DD_Plan_Prod_Sum
+WHERE Date_Valid IN (SELECT Work_Date FROM tmp_Working_Days )
+GROUP BY 1,2,3,4,5,6,7
+;
+
+COLLECT STATISTICS ON tmp_DFr_Plan_Prod_Sum;
+
+INSERT INTO tmp_DFR_Plan_Prod_Sum_FF
+(
+  Date_Valid                     
+  ,Node_Code                     
+  ,Service_Segment_Code          
+  ,Product_Group_Code            
+  ,WFF_Product_Count_In          
+  ,WFF_Product_Amt_In_CZK        
+  ,WFF_Product_Count             
+  ,WFF_Product_Avg_Balance_Credit
+  ,WFF_Product_Avg_Balance_Debit 
+  ,WFF_Product_Avg_Balance_Other 
+)
+SELECT
+  A.Date_Valid AS Date_Valid
+  ,CASE
+    WHEN A.Org_Unit_Level = '8' AND A.Service_Segment = 'MEM'
+      THEN 'RMM'||A.Org_Unit_Type||A.Org_Unit_Code||A.Org_Unit_Code_Suppl||SUBSTR(A.Business_Officer_Code,7,3)
+    WHEN A.Org_Unit_Level = '8' AND (A.Service_Segment = 'IND' OR A.Service_Segment = 'SB')
+      THEN 'RMR'||A.Org_Unit_Type||A.Org_Unit_Code||A.Org_Unit_Code_Suppl||SUBSTR(A.Business_Officer_Code,7,3)
+    WHEN A.Org_Unit_Level = '6'
+      THEN  'BRM'||A.Org_Unit_Type||A.Org_Unit_Code||A.Org_Unit_Code_Suppl||'XXX'
+    WHEN A.Org_Unit_Level = '4'
+      THEN 'GBM'||A.Org_Unit_Type||A.Org_Unit_Code||A.Org_Unit_Code_Suppl||'XXX'
+    WHEN A.Org_Unit_Level = '3'
+      THEN 'RGM'||A.Org_Unit_Type||A.Org_Unit_Code||A.Org_Unit_Code_Suppl||'XXX'
+    WHEN A.Org_Unit_Level = '2'
+      THEN 'DSM'||A.Org_Unit_Type||A.Org_Unit_Code||A.Org_Unit_Code_Suppl||'XXX'
+    END Node_Code
+  ,A.Service_Segment AS Service_Segment_Code
+ ,A.Product_Group_Code
+  ,(CASE
+      	WHEN  (TTARGET.Product_Count_In <> 0)
+      		THEN CAST( 
+            ((CAST(A.Product_Count_In  AS FLOAT) 
+            / TTARGET.Product_Count_In) * 100) 
+                AS DECIMAL(17,2) ) 
+      	ELSE NULL
+     END) AS   MFF_Product_Count_In       
+  ,(CASE
+      	WHEN  (TTARGET.Product_Amt_In_CZK <> 0)
+      		THEN CAST( 
+            ((CAST(A.Product_Amt_In_CZK  AS FLOAT) 
+            / TTARGET.Product_Amt_In_CZK) * 100) 
+                AS DECIMAL(17,2) ) 
+      	ELSE NULL
+     END) AS   MFF_Product_Amt_In_CZK       
+  ,(CASE
+      	WHEN  (TTARGET.Product_Count <> 0)
+      		THEN CAST( 
+            ((CAST(A.Product_Count  AS FLOAT) 
+            / TTARGET.Product_Count) * 100) 
+                AS DECIMAL(17,2) ) 
+      	ELSE NULL
+     END) AS   MFF_Product_Count       
+  ,(CASE
+      	WHEN  (TTARGET.Product_Avg_Bal_Credit_Plan <> 0)
+      		THEN CAST( 
+            ((CAST(A.Product_Avg_Balance_Credit  AS FLOAT) 
+            / TTARGET.Product_Avg_Bal_Credit_Plan) * 100) 
+                AS DECIMAL(17,2) ) 
+      	ELSE NULL
+     END) AS   MFF_Product_Avg_Balance_Credit       
+  ,(CASE
+      	WHEN  (TTARGET.Product_Avg_Bal_Debit_Plan <> 0)
+      		THEN CAST( 
+            ((CAST(A.Product_Avg_Balance_Debit  AS FLOAT) 
+            / TTARGET.Product_Avg_Bal_Debit_Plan) * 100) 
+                AS DECIMAL(17,2) ) 
+      	ELSE NULL
+     END) AS   MFF_Product_Avg_Balance_Debit       
+   ,(CASE
+      	WHEN  (TTARGET.Product_Avg_Bal_Other_Plan <> 0)
+      		THEN CAST( 
+            ((CAST(A.Product_Avg_Balance_Other  AS FLOAT) 
+            / TTARGET.Product_Avg_Bal_Other_Plan) * 100) 
+                AS DECIMAL(17,2) ) 
+      	ELSE NULL
+     END) AS   MFF_Product_Avg_Balance_Other       
+  
+FROM tmp_DFr_Prod_Sum_R A
+
+LEFT OUTER JOIN tmp_DFr_Plan_Prod_Sum TTARGET
+ON A.Org_Unit_Type = TTARGET.Org_Unit_Type
+AND A.Org_Unit_Code = TTARGET.Org_Unit_Code
+AND A.Org_Unit_Code_Suppl = TTARGET.Org_Unit_Code_Suppl
+AND A.Org_Unit_Level = TTARGET.Org_Unit_Level
+AND A.Service_Segment = TTARGET.Service_Segment_Code
+AND A.Product_Group_Code = TTARGET.Product_Group_Code
+AND SUBSTR(A.Business_Officer_Code,7,3) = COALESCE(TTARGET.Officer_Id,'XXX') 
+
+WHERE A.Date_Valid = dwkb_meta.V_MD_DWE_Date.DWE_Date ;
+
+
+--target start
+INSERT INTO tmp_DFR_Plan_Prod_Sum_FF
+(
+  Date_Valid                     
+  ,Node_Code                     
+  ,Service_Segment_Code          
+  ,Product_Group_Code            
+  ,WFF_Product_Count_In          
+  ,WFF_Product_Amt_In_CZK        
+  ,WFF_Product_Count             
+  ,WFF_Product_Avg_Balance_Credit
+  ,WFF_Product_Avg_Balance_Debit 
+  ,WFF_Product_Avg_Balance_Other 
+)
+SELECT
+  dwkb_meta.V_MD_DWE_Date.DWE_Date AS Date_Valid
+  ,CASE
+    WHEN TTARGET.Org_Unit_Level = '8' AND TTARGET.Service_Segment_Code = 'MEM'
+      THEN 'RMM'||TTARGET.Org_Unit_Type||TTARGET.Org_Unit_Code||TTARGET.Org_Unit_Code_Suppl||TTARGET.Officer_Id
+    WHEN TTARGET.Org_Unit_Level = '8' AND (TTARGET.Service_Segment_Code = 'IND' OR TTARGET.Service_Segment_Code = 'SB')
+      THEN 'RMR'||TTARGET.Org_Unit_Type||TTARGET.Org_Unit_Code||TTARGET.Org_Unit_Code_Suppl||TTARGET.Officer_Id
+    WHEN TTARGET.Org_Unit_Level = '6'
+      THEN  'BRM'||TTARGET.Org_Unit_Type||TTARGET.Org_Unit_Code||TTARGET.Org_Unit_Code_Suppl||'XXX'
+    WHEN TTARGET.Org_Unit_Level = '4'
+      THEN 'GBM'||TTARGET.Org_Unit_Type||TTARGET.Org_Unit_Code||TTARGET.Org_Unit_Code_Suppl||'XXX'
+    WHEN TTARGET.Org_Unit_Level = '3'
+      THEN 'RGM'||TTARGET.Org_Unit_Type||TTARGET.Org_Unit_Code||TTARGET.Org_Unit_Code_Suppl||'XXX'
+    WHEN TTARGET.Org_Unit_Level = '2'
+      THEN 'DSM'||TTARGET.Org_Unit_Type||TTARGET.Org_Unit_Code||TTARGET.Org_Unit_Code_Suppl||'XXX'
+    END Node_Code
+  ,TTARGET.Service_Segment_Code AS Service_Segment_Code
+ ,TTARGET.Product_Group_Code
+  ,0 AS   MFF_Product_Count_In       
+  ,0 AS   MFF_Product_Amt_In_CZK       
+  ,0 AS   MFF_Product_Count       
+  ,0 AS   MFF_Product_Avg_Balance_Credit       
+  ,0 AS   MFF_Product_Avg_Balance_Debit       
+  ,0 AS   MFF_Product_Avg_Balance_Other       
+  
+FROM tmp_DFr_Plan_Prod_Sum TTARGET
+
+LEFT OUTER JOIN tmp_DFr_Prod_Sum_R A
+ON A.Org_Unit_Type = TTARGET.Org_Unit_Type
+AND A.Org_Unit_Code = TTARGET.Org_Unit_Code
+AND A.Org_Unit_Code_Suppl = TTARGET.Org_Unit_Code_Suppl
+AND A.Org_Unit_Level = TTARGET.Org_Unit_Level
+AND A.Service_Segment = TTARGET.Service_Segment_Code
+AND A.Product_Group_Code = TTARGET.Product_Group_Code
+AND SUBSTR(A.Business_Officer_Code,7,3) = COALESCE(TTARGET.Officer_Id,'XXX') 
+
+WHERE A.Service_Segment IS NULL
+;
+COLLECT STATISTICS ON tmp_DFR_Plan_Prod_Sum_FF;
+
+--target end
+
+
+INSERT INTO tmp_DFR_Plan_Prod_Sum_FF
+(
+  Date_Valid                     
+  ,Node_Code                     
+  ,Service_Segment_Code          
+  ,Product_Group_Code            
+  ,WFF_Product_Count_In          
+  ,WFF_Product_Amt_In_CZK        
+  ,WFF_Product_Count             
+  ,WFF_Product_Avg_Balance_Credit
+  ,WFF_Product_Avg_Balance_Debit 
+  ,WFF_Product_Avg_Balance_Other 
+)
+SELECT
+Date_Valid                     
+,CASE
+  WHEN Service_Segment_Code = 'MEM' 
+    THEN 'HOC'||SUBSTR(Node_Code,4)                      
+  ELSE 'HOR'||SUBSTR(Node_Code,4)
+ END Node_Code
+,Service_Segment_Code          
+,Product_Group_Code            
+,WFF_Product_Count_In          
+,WFF_Product_Amt_In_CZK        
+,WFF_Product_Count             
+,WFF_Product_Avg_Balance_Credit
+,WFF_Product_Avg_Balance_Debit 
+,WFF_Product_Avg_Balance_Other 
+FROM tmp_DFR_Plan_Prod_Sum_FF
+WHERE SUBSTR(Node_Code,1,3) = 'GBM';
+
+COLLECT STATISTICS ON tmp_DFR_Plan_Prod_Sum_FF;
+
+DELETE FROM tmp_Working_Days;
+
+INSERT INTO tmp_Working_Days
+(Work_Date)
+SELECT 
+    Date_Valid
+FROM DFR_Plan_Prod_Sum_FF
+GROUP BY 1
+QUALIFY sum(1) over(order by Date_Valid DESC rows unbounded preceding) > 53
+;
+
+DELETE FROM DFR_Plan_Prod_Sum_FF WHERE Date_Valid IN (SELECT Work_Date FROM tmp_Working_Days) OR
+Date_Valid = dwkb_meta.V_MD_DWE_Date.DWE_Date;
+
+COLLECT STATISTICS DFR_Plan_Prod_Sum_FF;
+
+
+INSERT INTO DFR_Plan_Prod_Sum_FF
+(
+Date_Valid                     
+,Node_Code                     
+,Service_Segment_Code          
+,Product_Group_Code            
+,WFF_Product_Count_In          
+,WFF_Product_Amt_In_CZK        
+,WFF_Product_Count             
+,WFF_Product_Avg_Balance_Credit
+,WFF_Product_Avg_Balance_Debit 
+,WFF_Product_Avg_Balance_Other 
+)
+SELECT
+Date_Valid                     
+,Node_Code                     
+,Service_Segment_Code          
+,Product_Group_Code            
+      ,(CASE WHEN WFF_Product_Count_In  > 999 THEN 999 
+        WHEN WFF_Product_Count_In  < -999 THEN -999 ELSE WFF_Product_Count_In END)    
+      ,(CASE WHEN WFF_Product_Amt_In_CZK  > 999 THEN 999 
+        WHEN WFF_Product_Amt_In_CZK  < -999 THEN -999 ELSE WFF_Product_Amt_In_CZK END)    
+      ,(CASE WHEN WFF_Product_Count  > 999 THEN 999 
+        WHEN WFF_Product_Count  < -999 THEN -999 ELSE WFF_Product_Count END)    
+     ,(CASE WHEN WFF_Product_Avg_Balance_Credit  > 999 THEN 999 
+        WHEN WFF_Product_Avg_Balance_Credit  < -999 THEN -999 ELSE WFF_Product_Avg_Balance_Credit END)    
+      ,(CASE WHEN WFF_Product_Avg_Balance_Debit  > 999 THEN 999 
+        WHEN WFF_Product_Avg_Balance_Debit  < -999 THEN -999 ELSE WFF_Product_Avg_Balance_Debit END)    
+      ,(CASE WHEN WFF_Product_Avg_Balance_Other  > 999 THEN 999 
+        WHEN WFF_Product_Avg_Balance_Other  < -999 THEN -999 ELSE WFF_Product_Avg_Balance_Other END)    
+FROM tmp_DFR_Plan_Prod_Sum_FF 
+;  
+
+COLLECT STATISTICS DFR_Plan_Prod_Sum_FF;
+
+
+
+--COLLECT STATISTICS DFR_Plan_Prod_Sum_FF;
+
+drop table tmp_DFr_Prod_Sum_R;
+drop table tmp_DFr_Prod_Sum;
+drop table tmp_DFr_Prod_Sum_1;
+drop table tmp_DFr_Prod_Sum_MAIN;
+drop table tmp_DFR_Plan_Prod_Sum_FF;
+drop table tmp_DFr_Plan_Prod_Sum;
+
+EXEC dwkb_meta.MD_Script_Times_Upd(Script_Code = 'TDFRPPSF');
+
+.IF ERRORCODE > 0 THEN .QUIT 8;                                                 
+                                                                                
+.QUIT 0

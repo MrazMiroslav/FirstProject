@@ -1,0 +1,22 @@
+                   
+.SET ERRORLEVEL UNKNOWN SEVERITY 16;
+
+.SET ERROROUT STDOUT;
+
+.LOGON dwkb.kb.cz/load_performrep;
+--.LOGON dwkbtest.kb.cz/e_mmraz;
+
+DATABASE d_dwkb;
+
+.SET MAXERROR 1     
+
+.RUN FILE="TDFRPCCF.txt" 
+-- .RUN FILE="TDMPPSFF.txt"  
+-- .RUN FILE="TDMPCCFF.txt"  
+-- .RUN FILE="TDFRPPSF.txt"   
+
+.IF ERRORCODE > 0 THEN .QUIT ERRORCODE;                                     
+                                                                    
+.LOGOFF;
+
+.QUIT ERRORCODE;
