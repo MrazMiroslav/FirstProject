@@ -1,3 +1,5 @@
+TEST
+MMM
                    
 .SET ERRORLEVEL UNKNOWN SEVERITY 16;
 
